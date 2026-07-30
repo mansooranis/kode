@@ -89,6 +89,34 @@ func (m Model) Update(msg tea.Msg) (Model, bool) {
 	return m, false
 }
 
+// namePrefixWidth is how many columns "%s%s %s" burns on the prefix, status
+// glyph, and separating space before the file name itself starts.
+const namePrefixWidth = 4
+
+// truncateName cuts name down to fit within width visual columns, replacing
+// the cut tail with an ellipsis so long paths don't wrap onto a second row —
+// wrapping there shifts every row after it and corrupts the whole pane's
+// row-to-file mapping that mouse clicks and rendering rely on.
+func truncateName(name string, width int) string {
+	if width <= 0 || lipgloss.Width(name) <= width {
+		return name
+	}
+	if width <= 1 {
+		return strings.Repeat("…", width)
+	}
+	w := 0
+	cut := len(name)
+	for i, r := range name {
+		rw := lipgloss.Width(string(r))
+		if w+rw > width-1 {
+			cut = i
+			break
+		}
+		w += rw
+	}
+	return name[:cut] + "…"
+}
+
 func (m Model) View() string {
 	var b strings.Builder
 	for i, f := range m.files {
@@ -110,7 +138,8 @@ func (m Model) View() string {
 			status = "R"
 		}
 
-		line := fmt.Sprintf("%s%s %s", prefix, statusStyle.Render(status), f.Name())
+		name := truncateName(f.Name(), max(m.width-namePrefixWidth, 0))
+		line := fmt.Sprintf("%s%s %s", prefix, statusStyle.Render(status), name)
 		b.WriteString(style.Render(line))
 		b.WriteString("\n")
 	}
