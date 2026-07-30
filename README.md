@@ -7,12 +7,20 @@ leave inline comments as you go, and can call on an embedded coding agent to
 explain a hunk, answer questions about it, or write annotations and Mermaid
 diagrams of its own.
 
+> **Early release.** kode is at v0.0.1, expect rough edges and breaking
+> changes between versions.
+
 ## Getting started
 
-You need Go installed to build kode right now (it isn't packaged for
-Homebrew yet, though the build is set up to make that easy later).
+The easiest way to install kode is via Homebrew:
 
-Clone the repo and build it:
+```sh
+brew tap mansooranis/kode
+brew install kode
+```
+
+You can also build it from source if you have Go installed. Clone the repo
+and build it:
 
 ```sh
 git clone https://github.com/mansooranis/kode.git
