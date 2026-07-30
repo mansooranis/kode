@@ -1,6 +1,115 @@
 # kode
-An AI tool that helps you navigate complex kodebases.
+
+kode is a terminal app for reviewing code changes, with an AI agent built in
+to help you understand them. Point it at a git diff and it shows you a fast,
+readable side by side (or stacked) view with syntax highlighting, lets you
+leave inline comments as you go, and can call on an embedded coding agent to
+explain a hunk, answer questions about it, or write annotations and Mermaid
+diagrams of its own.
+
+## Getting started
+
+You need Go installed to build kode right now (it isn't packaged for
+Homebrew yet, though the build is set up to make that easy later).
+
+Clone the repo and build it:
+
+```sh
+git clone https://github.com/mansooranis/kode.git
+cd kode
+make build
+```
+
+This produces a `kode` binary in the current directory with a real version
+baked in (`kode version` to check). You can also run it straight from source
+while developing, without a build step:
+
+```sh
+go run ./cmd/kode
+```
+
+Once you have a binary, put it somewhere on your `PATH` (for example
+`make install`, which runs `go install` instead of writing a local binary).
+
+To try it out, go into any git repository that has some uncommitted changes
+or a commit you want to look at, and run:
+
+```sh
+kode
+```
+
+That opens the diff of your working tree in the TUI. To look at a specific
+commit instead, run `kode show <ref>`, for example `kode show HEAD~1`.
+
+Run `kode help` at any time to see every command kode understands.
+
+## Features
+
+- **Diff review TUI.** Browse every changed file in a sidebar, jump between
+  hunks, and read the diff with syntax highlighting. Toggle between a split
+  layout and a stacked one with `m`, switch focus between the sidebar and
+  the diff with `tab`, and quit with `q`.
+- **Inline comments.** Press `c` on a line to leave a note directly on the
+  diff, the same way you would leave a comment in a code review tool.
+  Comments are saved to a JSON file in the repo (`.kode/annotations.json` by
+  default) so they survive a restart and can be read or written by anything
+  else that touches that file, including the embedded agent.
+- **Built-in AI agent.** kode ships with an agent that can read the diff you
+  have open, explain what changed, and answer questions about it. The agent
+  supports MCP tool servers and a pluggable model provider (Anthropic by
+  default), configurable under the `[agent]` section of your config.
+- **Skills.** The agent loads Claude-Code-style skills (markdown files with
+  frontmatter) from a global skills folder, normally
+  `~/.config/kode/skills`. kode ships a few of its own and keeps them up to
+  date automatically: every time you run kode after an upgrade, it notices
+  its version changed and re-copies its bundled skills into that folder, so
+  you never have to do it by hand. Run `kode skills sync` to force it right
+  away.
+- **Live comments from another agent session.** kode hosts a small local MCP
+  server while it is running (`127.0.0.1:7378` by default). Point a separate
+  agent session, such as Claude Code, at it and that agent can read the open
+  diff and leave comments on it, which show up in your kode window right
+  away. kode prints the one-time setup command it needs when it starts.
+- **Codebase walkthroughs.** `kode explain` opens a read-only viewer for
+  annotations and Mermaid diagrams an agent has already written about a
+  codebase, useful for onboarding or documenting how something works without
+  touching a diff at all.
+- **Works with git, jj, and Sapling.** kode shells out to whichever version
+  control tool your project uses to produce the diff it renders.
+
+## Configuration
+
+kode reads settings from `.kode/config.toml` in your project first, then
+falls back to `~/.config/kode/config.toml`, then to built in defaults.
+Anything you don't set keeps its default value. Notable settings:
+
+- `theme`, `mode` (`auto`, `split`, or `stack`), `vcs` (`auto`, `git`, `jj`,
+  or `sapling`), `line_numbers`, `tab_width`, `wrap_lines`
+- `[agent]`: `enabled`, `provider`, `model`, `effort`, `skills_path`
+- `[mcp_server]`: `enabled`, `port`, the local server kode hosts for other
+  agents to connect to
+- `[annotations]`: `file`, where comments are persisted
+- `[keybindings]`: remap any key to a different action
 
 ## Development
 
-kode is a Go TUI. Run `go run ./cmd/kode` inside a git repo with changes.
+kode is a Go TUI built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+Run `go run ./cmd/kode` inside a git repo with changes to try your edits
+without building a binary first.
+
+Run the test suite with:
+
+```sh
+make test
+```
+
+Build a version stamped binary with `make build` or `make install`.
+`VERSION` defaults to `git describe` and is baked into the binary with
+`-ldflags`, so `kode version` reports something meaningful even before there
+is a tagged release. This is also the command a future Homebrew formula's
+`install` step should run.
+
+`.claude/skills/kode-comments/SKILL.md` in this repo is a symlink into
+`internal/agent/skills/bundled/kode-comments/SKILL.md`. That way there is
+only one copy of the skill to edit, and it works both as a project skill for
+Claude Code and as one of the skills kode bundles into its own binary.
