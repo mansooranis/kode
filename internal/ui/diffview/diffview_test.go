@@ -333,3 +333,29 @@ func TestClickPastReplyButtonColumnsDoesNothing(t *testing.T) {
 		t.Fatal("clicking past the [Reply] button's own columns should not open the draft box")
 	}
 }
+
+// TestDraftBoxSameWidthAndIndentAsCommentCard guards the regression where the
+// draft box used its own separate width formula (m.boxWidth(0), no indent)
+// while comment cards used a different one (m.boxWidth(len(indent)), with
+// indent) — the two didn't agree, so a reply visually nested at a different
+// width than the thread it was replying to. Both must now render identical
+// borders (same indent, same total width) via the shared boxTopBorder etc.
+// helpers.
+func TestDraftBoxSameWidthAndIndentAsCommentCard(t *testing.T) {
+	m := newTestModel()
+	m.SetAnnotations([]annotate.Annotation{{File: "example.go", Line: 1, Author: annotate.Human, Text: "why?"}})
+
+	card := renderCommentCard(annotate.Annotation{Author: annotate.Human, Text: "x"}, m.boxWidth(len(commentThreadIndent)))
+	cardTop := card[0]
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	draftTop := m.renderDraftBox()[0]
+
+	if lipgloss.Width(cardTop) != lipgloss.Width(draftTop) {
+		t.Fatalf("card top border width %d != draft box top border width %d\ncard:  %q\ndraft: %q",
+			lipgloss.Width(cardTop), lipgloss.Width(draftTop), cardTop, draftTop)
+	}
+	if !strings.HasPrefix(cardTop, commentThreadIndent) || !strings.HasPrefix(draftTop, commentThreadIndent) {
+		t.Fatalf("expected both to share the same left indent %q\ncard:  %q\ndraft: %q", commentThreadIndent, cardTop, draftTop)
+	}
+}

@@ -33,6 +33,15 @@ const (
 	focusDiff
 )
 
+// titleHeight is the one row each pane's title ("Files (N)" / the current
+// filename) takes above its content. Both panes reserve it in layout(), but
+// only sidebar.Update compensates for it internally (idx := msg.Y - 1);
+// diffview.Update was built title-agnostic (embeddable component, no
+// knowledge of what wraps it), so mouse coordinates forwarded to it must
+// have this subtracted here — omitting it made every click into the diff
+// pane land one row below what the user actually clicked.
+const titleHeight = 1
+
 type box struct{ x, y, w, h int }
 
 func (b box) contains(x, y int) bool {
@@ -170,7 +179,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.sidebar.SetFocused(false)
 			local := msg
 			local.X -= a.diffBox.x
-			local.Y -= a.diffBox.y
+			local.Y -= a.diffBox.y + titleHeight
 			return a.forwardToDiffview(local)
 		}
 	}
@@ -232,7 +241,6 @@ func (a *App) layout() {
 	if contentHeight < 0 {
 		contentHeight = 0
 	}
-	titleHeight := 1
 
 	if a.mode == "stack" {
 		sidebarHeight := len(a.changeset.Files) + titleHeight

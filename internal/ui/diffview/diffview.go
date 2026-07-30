@@ -295,7 +295,7 @@ func (m Model) activateDraft() Model {
 
 	ta := textarea.New()
 	ta.Placeholder = "Write a note..."
-	ta.SetWidth(m.boxWidth(0) - 4)
+	ta.SetWidth(m.boxWidth(len(commentThreadIndent)) - 4)
 	ta.SetHeight(draftTextareaHeight)
 	ta.ShowLineNumbers = false
 	ta.Focus()
@@ -373,7 +373,7 @@ func (m *Model) render() {
 
 	if m.draftActive {
 		// The pane may have been resized since the draft was opened.
-		m.draftTextarea.SetWidth(m.boxWidth(0) - 4)
+		m.draftTextarea.SetWidth(m.boxWidth(len(commentThreadIndent)) - 4)
 	}
 
 	var b strings.Builder
@@ -435,41 +435,86 @@ func (m *Model) render() {
 	m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
 }
 
-// renderDraftBox draws the floating "Draft note" box: a bordered frame with
-// the file/status/line in its top border, the note textarea in the middle,
-// and Save/Cancel affordances in its bottom border — rendered inline in the
-// diff right after the line it's attached to, rather than as a screen-level
-// overlay, so it reads like a threaded reply the same way submitted notes do.
+// boxTopBorder renders "╭─<label><fill>╮" at exactly total visible columns,
+// truncating label if it doesn't fit. Shared by the draft box and comment
+// cards so both draw from identical width arithmetic — the two previously
+// used separate ad-hoc formulas that didn't quite agree, which is what made
+// the draft box render narrower/raggeder than the comment cards above it.
+func boxTopBorder(label string, total int, style lipgloss.Style) string {
+	inner := max(total-2, 0)
+	// Measure by visual width, not len() (byte count) — labels can contain
+	// multi-byte-but-single-column runes (e.g. the "·" separator in a
+	// comment card's author/date header), and byte-counting them silently
+	// under-fills the border by one column per such rune, exactly the bug
+	// that made comment cards render one column narrower than the draft box
+	// (whose title happens to be pure ASCII, so it never showed the drift).
+	if lipgloss.Width(label) > inner-1 {
+		label = truncateToWidth(label, max(inner-1, 0))
+	}
+	fill := max(inner-1-lipgloss.Width(label), 0)
+	return style.Render("╭─" + label + strings.Repeat("─", fill) + "╮")
+}
+
+// truncateToWidth cuts s down to at most width visual columns, rune-safe.
+func truncateToWidth(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	w := 0
+	for i, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > width {
+			return s[:i]
+		}
+		w += rw
+	}
+	return s
+}
+
+// boxBottomBorder renders "╰<fill> <trailer>╯" at exactly total visible
+// columns, with trailer (e.g. Save/Cancel buttons) right-aligned. An empty
+// trailer draws a plain "╰────╯" line.
+func boxBottomBorder(trailer string, total int, style lipgloss.Style) string {
+	inner := max(total-2, 0)
+	if trailer == "" {
+		return style.Render("╰" + strings.Repeat("─", inner) + "╯")
+	}
+	fill := max(inner-lipgloss.Width(trailer)-1, 0)
+	return style.Render("╰"+strings.Repeat("─", fill)+" ") + trailer + style.Render("╯")
+}
+
+// boxContentLine renders "│ <content><pad> │" at exactly total visible
+// columns, right-padding short content so the box's right border forms a
+// clean vertical line regardless of how wide each row's content happens to
+// be — the draft box previously skipped this padding for textarea lines,
+// which is what made its right edge look broken/ragged.
+func boxContentLine(content string, total int, style lipgloss.Style) string {
+	width := max(total-4, 0)
+	pad := max(width-lipgloss.Width(content), 0)
+	return style.Render("│ ") + content + strings.Repeat(" ", pad) + style.Render(" │")
+}
+
+// renderDraftBox draws the floating "Draft note"/"Reply" box: a bordered
+// frame with the file/status/line in its top border, the note textarea in
+// the middle, and Save/Cancel affordances in its bottom border — rendered
+// inline in the diff right after the line it's attached to, at the same
+// indent and width as renderCommentCard so a draft nests visually like any
+// other entry in the same thread rather than looking like a different size.
 func (m Model) renderDraftBox() []string {
-	innerWidth := m.boxWidth(0)
+	total := m.boxWidth(len(commentThreadIndent))
 
 	title := fmt.Sprintf(" Draft note - %s (%s) R%d ", m.file.Name(), fileStatus(m.file), m.draftLine)
 	if m.draftIsReply {
 		title = fmt.Sprintf(" Reply - %s R%d ", m.file.Name(), m.draftLine)
 	}
-	if len(title) > innerWidth-2 {
-		title = title[:innerWidth-2]
-	}
-	topPad := innerWidth - 2 - len(title)
-	if topPad < 0 {
-		topPad = 0
-	}
-	top := draftBorder.Render("╭─"+title) + draftBorder.Render(strings.Repeat("─", topPad)+"╮")
 
 	var lines []string
-	lines = append(lines, top)
+	lines = append(lines, commentThreadIndent+boxTopBorder(title, total, draftBorder))
 	for _, taLine := range strings.Split(m.draftTextarea.View(), "\n") {
-		lines = append(lines, draftBorder.Render("│ ")+taLine+draftBorder.Render(" │"))
+		lines = append(lines, commentThreadIndent+boxContentLine(taLine, total, draftBorder))
 	}
-
 	buttons := draftButton.Render(" Save (^S) ") + " " + draftButton.Render(" Cancel (Esc) ")
-	bottomFill := innerWidth - 2 - lipgloss.Width(buttons) - 1
-	if bottomFill < 0 {
-		bottomFill = 0
-	}
-	bottom := draftBorder.Render("╰"+strings.Repeat("─", bottomFill)+" ") + buttons + draftBorder.Render("╯")
-	lines = append(lines, bottom)
-
+	lines = append(lines, commentThreadIndent+boxBottomBorder(buttons, total, draftBorder))
 	return lines
 }
 
@@ -477,32 +522,16 @@ func (m Model) renderDraftBox() []string {
 // comment box: an author/timestamp header in the top border, the (word
 // wrapped) comment text inside, colored per source like everywhere else
 // annotations are distinguished (human/kode-agent/mcp:<client>).
-func renderCommentCard(a annotate.Annotation, width int) []string {
+func renderCommentCard(a annotate.Annotation, total int) []string {
 	style := authorStyle(a.Author)
-	innerWidth := width - 2
-	if innerWidth < 1 {
-		innerWidth = 1
-	}
-
 	header := fmt.Sprintf(" %s · %s ", a.Author, a.CreatedAt.Format("Jan 2 15:04"))
-	if len(header) > innerWidth {
-		header = header[:innerWidth]
-	}
-	topPad := innerWidth - len(header)
-	if topPad < 0 {
-		topPad = 0
-	}
 
 	var out []string
-	out = append(out, commentThreadIndent+style.Render("╭─"+header+strings.Repeat("─", topPad)+"╮"))
-	for _, line := range wrapText(a.Text, innerWidth-2) {
-		pad := innerWidth - 2 - lipgloss.Width(line)
-		if pad < 0 {
-			pad = 0
-		}
-		out = append(out, commentThreadIndent+style.Render("│ ")+line+strings.Repeat(" ", pad)+style.Render(" │"))
+	out = append(out, commentThreadIndent+boxTopBorder(header, total, style))
+	for _, line := range wrapText(a.Text, max(total-4, 1)) {
+		out = append(out, commentThreadIndent+boxContentLine(line, total, style))
 	}
-	out = append(out, commentThreadIndent+style.Render("╰"+strings.Repeat("─", innerWidth)+"╯"))
+	out = append(out, commentThreadIndent+boxBottomBorder("", total, style))
 	return out
 }
 

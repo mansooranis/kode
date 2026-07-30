@@ -17,26 +17,32 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mansooranis/kode/internal/annotate"
+	"github.com/mansooranis/kode/internal/diagram"
 	"github.com/mansooranis/kode/internal/diffparse"
 )
 
 type Server struct {
 	store     *annotate.Store
 	changeset diffparse.Changeset
+	diagram   diagram.Renderer
 	httpSrv   *http.Server
 }
 
-func New(store *annotate.Store, changeset diffparse.Changeset, port int) *Server {
-	s := &Server{store: store, changeset: changeset}
+func New(store *annotate.Store, changeset diffparse.Changeset, renderer diagram.Renderer, port int) *Server {
+	s := &Server{store: store, changeset: changeset, diagram: renderer}
 
 	mcpSrv := sdk.NewServer(&sdk.Implementation{Name: "kode", Version: "0.1.0"}, nil)
 	sdk.AddTool(mcpSrv, &sdk.Tool{
 		Name:        "add_annotation",
-		Description: "Add a comment on a specific line of a file in the diff currently open in kode. Use this to answer a reviewer's question or explain a piece of code.",
+		Description: "Add a comment on a specific line of a file kode currently has open (reviewing a diff, or in `kode explain` mode). Use this to answer a reviewer's question, or to leave an explanation of a piece of code so someone else can learn it via `kode explain`.",
 	}, s.addAnnotation)
 	sdk.AddTool(mcpSrv, &sdk.Tool{
+		Name:        "add_diagram",
+		Description: "Render Mermaid diagram source to ASCII/Unicode art and attach it at a specific file/line, so it shows up as a diagram card in kode (e.g. via `kode explain`). Use this for flowcharts/control-flow/architecture diagrams when explaining code.",
+	}, s.addDiagram)
+	sdk.AddTool(mcpSrv, &sdk.Tool{
 		Name:        "list_annotations",
-		Description: "List all comments/annotations on the diff currently open in kode, optionally filtered to one file. Use this to find unanswered reviewer comments.",
+		Description: "List all comments/annotations/diagrams currently in kode, optionally filtered to one file. Use this to find unanswered reviewer comments, or to see what's already been explained before adding more.",
 	}, s.listAnnotations)
 	sdk.AddTool(mcpSrv, &sdk.Tool{
 		Name:        "get_diff",
@@ -100,6 +106,40 @@ func (s *Server) addAnnotation(_ context.Context, req *sdk.CallToolRequest, args
 	}, nil, nil
 }
 
+type addDiagramArgs struct {
+	File    string `json:"file" jsonschema:"path of the file to attach the diagram to"`
+	Line    int    `json:"line" jsonschema:"the line number to attach the diagram to"`
+	Mermaid string `json:"mermaid" jsonschema:"Mermaid diagram source (e.g. a flowchart/graph definition)"`
+}
+
+func (s *Server) addDiagram(_ context.Context, req *sdk.CallToolRequest, args addDiagramArgs) (*sdk.CallToolResult, any, error) {
+	rendered, err := s.diagram.Render(args.Mermaid)
+	if err != nil {
+		return &sdk.CallToolResult{
+			Content: []sdk.Content{&sdk.TextContent{Text: fmt.Sprintf("failed to render diagram: %v", err)}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	source := "mcp"
+	if info := req.ClientInfo(); info != nil && info.Name != "" {
+		source = "mcp:" + info.Name
+	}
+
+	a := s.store.Add(annotate.Annotation{
+		File:   args.File,
+		Line:   args.Line,
+		Author: source,
+		Kind:   annotate.KindDiagram,
+		Text:   rendered,
+		Source: args.Mermaid,
+	})
+
+	return &sdk.CallToolResult{
+		Content: []sdk.Content{&sdk.TextContent{Text: fmt.Sprintf("added diagram %s on %s:%d", a.ID, a.File, a.Line)}},
+	}, nil, nil
+}
+
 type listAnnotationsArgs struct {
 	File string `json:"file,omitempty" jsonschema:"optional: restrict to this file"`
 }
@@ -118,7 +158,11 @@ func (s *Server) listAnnotations(_ context.Context, _ *sdk.CallToolRequest, args
 
 	var b strings.Builder
 	for _, a := range annotations {
-		fmt.Fprintf(&b, "[%s] %s:%d (%s): %s\n", a.ID, a.File, a.Line, a.Author, a.Text)
+		kind := a.Kind
+		if kind == "" {
+			kind = annotate.KindComment
+		}
+		fmt.Fprintf(&b, "[%s] %s:%d (%s, %s): %s\n", a.ID, a.File, a.Line, a.Author, kind, a.Text)
 	}
 	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: b.String()}}}, nil, nil
 }

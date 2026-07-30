@@ -26,13 +26,32 @@ const (
 	KodeAgent = "kode-agent"
 )
 
+// Annotation kinds. KindComment is the default (a prose note); KindDiagram
+// holds a Mermaid-sourced diagram, pre-rendered to ASCII/Unicode art in Text
+// so viewers never need their own diagram renderer.
+const (
+	KindComment = "comment"
+	KindDiagram = "diagram"
+)
+
 type Annotation struct {
 	ID        string    `json:"id,omitempty"`
 	File      string    `json:"file"`
 	Line      int       `json:"line"` // canonical line number: new-file line if present, else old-file line
 	Author    string    `json:"author"`
+	Kind      string    `json:"kind,omitempty"` // "comment" (default, omitted) | "diagram"
 	Text      string    `json:"text"`
+	Source    string    `json:"source,omitempty"` // raw Mermaid text, only set for diagrams
 	CreatedAt time.Time `json:"created_at,omitempty"`
+}
+
+// effectiveKind returns a's Kind, defaulting to KindComment for annotations
+// loaded before Kind existed (empty string in older JSON files).
+func (a Annotation) effectiveKind() string {
+	if a.Kind == "" {
+		return KindComment
+	}
+	return a.Kind
 }
 
 // computeID derives a stable, content-based ID when one isn't already set.
@@ -41,8 +60,8 @@ type Annotation struct {
 // works because CreatedAt is fixed once (either loaded from the file or set
 // once at first Add) rather than recomputed per reload.
 func computeID(a Annotation) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%s",
-		a.File, a.Line, a.Author, a.Text, a.CreatedAt.UTC().Format(time.RFC3339Nano))))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%s\x00%s",
+		a.File, a.Line, a.Author, a.effectiveKind(), a.Text, a.CreatedAt.UTC().Format(time.RFC3339Nano))))
 	return hex.EncodeToString(sum[:6])
 }
 
