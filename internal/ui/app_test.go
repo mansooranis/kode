@@ -77,3 +77,33 @@ func TestMouseClickOneRowHigherMissesButton(t *testing.T) {
 		t.Fatal("clicking the context line (no button) should not open the draft box")
 	}
 }
+
+// TestKeyVTogglesSplitViewRegardlessOfFocus guards a bug where "v" only
+// toggled the diff pane's split view when a.focus == focusDiff, because it
+// was handled inside diffview.Update and only reached there via
+// forwardToDiffview. The app starts with focus on the sidebar (see
+// NewApp), so pressing "v" right after launch — before ever pressing "tab"
+// — silently did nothing, unlike "m" (layout toggle) which is handled here
+// in app.go regardless of focus.
+func TestKeyVTogglesSplitViewRegardlessOfFocus(t *testing.T) {
+	store := annotate.NewStore()
+	app := NewApp(config.Default(), testChangeset(), store, t.TempDir()+"/annotations.json")
+
+	m, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	app = m.(App)
+
+	if app.focus != focusSidebar {
+		t.Fatalf("expected focus to default to the sidebar, got %v", app.focus)
+	}
+	if app.diffview.SplitView() {
+		t.Fatal("expected unified view by default")
+	}
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")}
+	m, _ = app.Update(msg)
+	app = m.(App)
+
+	if !app.diffview.SplitView() {
+		t.Fatal("expected \"v\" to switch to split view even while the sidebar has focus")
+	}
+}

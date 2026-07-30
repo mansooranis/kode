@@ -76,6 +76,19 @@ type rowMeta struct {
 	ordinal   int  // index into the flat list of diff lines; -1 if not a code line
 	changed   bool // true for add/delete lines, i.e. lines that get a comment button
 	replyLine int  // >0 if this row is the "[Reply]" button for this canonical line number
+
+	// The fields below apply only when splitRow is true, i.e. this row is a
+	// side-by-side code row rendered by renderSplitHunk. Unlike unified rows
+	// (one diff line per row), a split row can hold two distinct diff lines
+	// (a deletion on the left paired with its replacement on the right), so
+	// clicks need their own ordinal/changed pair per side plus the column
+	// boundary (midX) to know which side msg.X landed in.
+	splitRow     bool
+	leftOrdinal  int
+	rightOrdinal int
+	leftChanged  bool
+	rightChanged bool
+	midX         int
 }
 
 type Model struct {
@@ -83,6 +96,7 @@ type Model struct {
 	file        diffparse.FileDiff
 	annotations []annotate.Annotation
 	lineNumbers bool
+	splitView   bool // GitHub-style side-by-side rendering, vs. the default unified view
 	width       int
 	height      int
 
@@ -140,6 +154,18 @@ func (m *Model) SetSize(width, height int) {
 
 func (m *Model) SetLineNumbers(on bool) {
 	m.lineNumbers = on
+	m.render()
+}
+
+// SplitView reports whether the diff is currently rendered side-by-side.
+func (m Model) SplitView() bool {
+	return m.splitView
+}
+
+// SetSplitView switches between unified (default) and GitHub-style
+// side-by-side rendering.
+func (m *Model) SetSplitView(on bool) {
+	m.splitView = on
 	m.render()
 }
 
@@ -202,14 +228,29 @@ func (m *Model) MoveCursor(delta int) {
 	if m.totalLines == 0 {
 		return
 	}
-	m.cursor += delta
-	if m.cursor < 0 {
-		m.cursor = 0
+
+	// In split view, a delete/add pair shares one visual row (see
+	// renderSplitHunk), so it claims two ordinals for one row. Moving by a
+	// single ordinal can then land back on the same row the cursor started
+	// on, which makes "up"/"down" feel broken (the highlight barely seems
+	// to move). Keep stepping in the same direction until the row actually
+	// changes, or until the cursor stops moving (start/end of file), so
+	// every keypress moves the cursor to a different row when one exists.
+	startRow := m.cursorRow
+	for {
+		prev := m.cursor
+		m.cursor += delta
+		if m.cursor < 0 {
+			m.cursor = 0
+		}
+		if m.cursor >= m.totalLines {
+			m.cursor = m.totalLines - 1
+		}
+		m.render()
+		if m.cursor == prev || !m.splitView || m.cursorRow != startRow {
+			break
+		}
 	}
-	if m.cursor >= m.totalLines {
-		m.cursor = m.totalLines - 1
-	}
-	m.render()
 
 	if m.cursorRow < m.viewport.YOffset {
 		m.viewport.YOffset = m.cursorRow
@@ -245,6 +286,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, bool) {
 			return m, nil, false
 		case "c":
 			return m.activateDraft(), nil, false
+		case "v":
+			m.splitView = !m.splitView
+			m.render()
+			return m, nil, false
 		}
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
@@ -259,6 +304,29 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, bool) {
 							m.cursor = ord
 							return m.activateDraft(), nil, false
 						}
+					}
+					return m, nil, false
+				}
+
+				if meta.splitRow {
+					var ord int
+					var changed bool
+					var colStart int
+					switch {
+					case msg.X < meta.midX-1:
+						ord, changed, colStart = meta.leftOrdinal, meta.leftChanged, 0
+					case msg.X >= meta.midX:
+						ord, changed, colStart = meta.rightOrdinal, meta.rightChanged, meta.midX
+					default:
+						return m, nil, false // clicked the column separator itself
+					}
+					if ord >= 0 {
+						m.cursor = ord
+						onButton := changed && msg.X < colStart+len(commentButtonGlyph)+1
+						if onButton {
+							return m.activateDraft(), nil, false
+						}
+						m.render()
 					}
 					return m, nil, false
 				}
@@ -398,41 +466,170 @@ func (m *Model) render() {
 		}
 		writeLine(hunkStyle.Render(hunk.Header), rowMeta{ordinal: -1})
 
-		for _, l := range hunk.Lines {
-			isCursor := ordinal == m.cursor
-			if isCursor {
-				m.cursorRow = row
-			}
-			changed := l.Op == diffparse.OpAdd || l.Op == diffparse.OpDelete
-			writeLine(m.renderLine(lexer, l, isCursor, changed), rowMeta{ordinal: ordinal, changed: changed})
-
-			key := l.NewLineNo
-			if key == 0 {
-				key = l.OldLineNo
-			}
-			thread := annotationsByLine[key]
-			for _, a := range thread {
-				for _, line := range renderCommentCard(a, m.boxWidth(len(commentThreadIndent))) {
-					writeLine(line, rowMeta{ordinal: -1})
-				}
-			}
-			// The reply button is suppressed while a draft is already open on
-			// this exact line — the open draft box IS the reply affordance
-			// at that point, showing both would be redundant.
-			if len(thread) > 0 && !(m.draftActive && ordinal == m.draftOrdinal) {
-				writeLine(commentThreadIndent+commentBtnStyle.Render(replyButtonGlyph), rowMeta{ordinal: -1, replyLine: key})
-			}
-			if m.draftActive && ordinal == m.draftOrdinal {
-				for _, line := range m.renderDraftBox() {
-					writeLine(line, rowMeta{ordinal: -1})
-				}
-			}
-			ordinal++
+		if m.splitView {
+			ordinal = m.renderSplitHunk(hunk, ordinal, lexer, annotationsByLine, writeLine)
+		} else {
+			ordinal = m.renderUnifiedHunk(hunk, ordinal, lexer, annotationsByLine, writeLine)
 		}
 	}
 	m.totalLines = ordinal
 
 	m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
+}
+
+// canonicalKey is the line number an annotation attaches to: the new-file
+// line if the line exists there, else the old-file line. Matches how
+// CursorTarget picks a line number for a freshly created comment.
+func canonicalKey(l diffparse.Line) int {
+	if l.NewLineNo > 0 {
+		return l.NewLineNo
+	}
+	return l.OldLineNo
+}
+
+// emitThreadRows writes the existing comment cards, "[Reply]" button, and
+// (if open) the draft box for the diff line at ordinal/key. Shared by both
+// unified and split rendering so the two stay in sync.
+func (m *Model) emitThreadRows(writeLine func(string, rowMeta), annotationsByLine map[int][]annotate.Annotation, key, ordinal int) {
+	thread := annotationsByLine[key]
+	for _, a := range thread {
+		for _, line := range renderCommentCard(a, m.boxWidth(len(commentThreadIndent))) {
+			writeLine(line, rowMeta{ordinal: -1})
+		}
+	}
+	// The reply button is suppressed while a draft is already open on this
+	// exact line — the open draft box IS the reply affordance at that point,
+	// showing both would be redundant.
+	if len(thread) > 0 && !(m.draftActive && ordinal == m.draftOrdinal) {
+		writeLine(commentThreadIndent+commentBtnStyle.Render(replyButtonGlyph), rowMeta{ordinal: -1, replyLine: key})
+	}
+	if m.draftActive && ordinal == m.draftOrdinal {
+		for _, line := range m.renderDraftBox() {
+			writeLine(line, rowMeta{ordinal: -1})
+		}
+	}
+}
+
+// renderUnifiedHunk renders one hunk's lines the traditional way: one row
+// per diff line, sign-prefixed, in original patch order. Returns the ordinal
+// just past this hunk's lines.
+func (m *Model) renderUnifiedHunk(hunk diffparse.Hunk, ordinal int, lexer chroma.Lexer, annotationsByLine map[int][]annotate.Annotation, writeLine func(string, rowMeta)) int {
+	for _, l := range hunk.Lines {
+		isCursor := ordinal == m.cursor
+		if isCursor {
+			m.cursorRow = len(m.rows)
+		}
+		changed := l.Op == diffparse.OpAdd || l.Op == diffparse.OpDelete
+		writeLine(m.renderLine(lexer, l, isCursor, changed), rowMeta{ordinal: ordinal, changed: changed})
+		m.emitThreadRows(writeLine, annotationsByLine, canonicalKey(l), ordinal)
+		ordinal++
+	}
+	return ordinal
+}
+
+// splitPair is one row of a side-by-side hunk: li/ri index into the hunk's
+// Lines slice (-1 if that side is blank for this row).
+type splitPair struct{ li, ri int }
+
+// pairSplitRows groups a hunk's flat, patch-ordered lines into side-by-side
+// rows: context lines appear on both sides of their own row, and each
+// contiguous run of deletions is zipped index-wise against the run of
+// additions that follows it (GitHub's split-diff heuristic) — extra lines on
+// the longer side get a blank counterpart rather than a matching pair.
+func pairSplitRows(lines []diffparse.Line) []splitPair {
+	var rows []splitPair
+	i := 0
+	for i < len(lines) {
+		if lines[i].Op == diffparse.OpContext {
+			rows = append(rows, splitPair{li: i, ri: i})
+			i++
+			continue
+		}
+
+		delStart := i
+		for i < len(lines) && lines[i].Op == diffparse.OpDelete {
+			i++
+		}
+		delEnd := i
+		addStart := i
+		for i < len(lines) && lines[i].Op == diffparse.OpAdd {
+			i++
+		}
+		addEnd := i
+
+		nDel := delEnd - delStart
+		nAdd := addEnd - addStart
+		n := nDel
+		if nAdd > n {
+			n = nAdd
+		}
+		for k := 0; k < n; k++ {
+			pr := splitPair{li: -1, ri: -1}
+			if k < nDel {
+				pr.li = delStart + k
+			}
+			if k < nAdd {
+				pr.ri = addStart + k
+			}
+			rows = append(rows, pr)
+		}
+	}
+	return rows
+}
+
+// renderSplitHunk renders one hunk's lines side-by-side, GitHub style.
+// Returns the ordinal just past this hunk's lines.
+func (m *Model) renderSplitHunk(hunk diffparse.Hunk, ordinal int, lexer chroma.Lexer, annotationsByLine map[int][]annotate.Annotation, writeLine func(string, rowMeta)) int {
+	base := ordinal
+	for _, pr := range pairSplitRows(hunk.Lines) {
+		var leftLine, rightLine diffparse.Line
+		hasLeft, hasRight := pr.li >= 0, pr.ri >= 0
+		leftOrdinal, rightOrdinal := -1, -1
+		if hasLeft {
+			leftLine = hunk.Lines[pr.li]
+			leftOrdinal = base + pr.li
+		}
+		if hasRight {
+			rightLine = hunk.Lines[pr.ri]
+			rightOrdinal = base + pr.ri
+		}
+
+		isCursorLeft := hasLeft && leftOrdinal == m.cursor
+		isCursorRight := hasRight && rightOrdinal == m.cursor
+		if isCursorLeft || isCursorRight {
+			m.cursorRow = len(m.rows)
+		}
+
+		leftChanged := hasLeft && leftLine.Op != diffparse.OpContext
+		rightChanged := hasRight && rightLine.Op != diffparse.OpContext
+
+		line, midX := m.renderSplitLine(lexer, leftLine, hasLeft, isCursorLeft, rightLine, hasRight, isCursorRight)
+		writeLine(line, rowMeta{
+			ordinal:      -1,
+			splitRow:     true,
+			leftOrdinal:  leftOrdinal,
+			rightOrdinal: rightOrdinal,
+			leftChanged:  leftChanged,
+			rightChanged: rightChanged,
+			midX:         midX,
+		})
+
+		if pr.li == pr.ri {
+			// Context line: one underlying diff line shown on both sides,
+			// so it gets exactly one thread, not two.
+			if hasLeft {
+				m.emitThreadRows(writeLine, annotationsByLine, canonicalKey(leftLine), leftOrdinal)
+			}
+		} else {
+			if hasLeft {
+				m.emitThreadRows(writeLine, annotationsByLine, canonicalKey(leftLine), leftOrdinal)
+			}
+			if hasRight {
+				m.emitThreadRows(writeLine, annotationsByLine, canonicalKey(rightLine), rightOrdinal)
+			}
+		}
+	}
+	return base + len(hunk.Lines)
 }
 
 // boxTopBorder renders "╭─<label><fill>╮" at exactly total visible columns,
@@ -469,6 +666,17 @@ func truncateToWidth(s string, width int) string {
 		w += rw
 	}
 	return s
+}
+
+// padToWidth right-pads s with spaces until it's width visual columns,
+// measuring by visual width (not byte count) so ANSI-colored strings pad
+// correctly. Returns s unchanged if it's already at or past width.
+func padToWidth(s string, width int) string {
+	w := lipgloss.Width(s)
+	if w >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-w)
 }
 
 // boxBottomBorder renders "╰<fill> <trailer>╯" at exactly total visible
@@ -586,6 +794,10 @@ func (m *Model) renderLine(lexer chroma.Lexer, l diffparse.Line, isCursor, chang
 		button = commentBtnStyle.Render(commentButtonGlyph)
 	}
 
+	// Long source lines must not be allowed to overflow the pane: the
+	// viewport doesn't wrap, so an untruncated line just spills out past
+	// the box border. Budget the remaining width after the button/gutter/
+	// sign prefix, same as renderSplitSide does for the split view.
 	code := highlight(lexer, &m.style, l.Content)
 	if code == "" {
 		code = l.Content
@@ -610,6 +822,88 @@ func (m *Model) renderLine(lexer chroma.Lexer, l diffparse.Line, isCursor, chang
 		gutter = gutterStyle.Background(cursorLineBg).Render(gutterText)
 	}
 	return fmt.Sprintf("%s %s %s %s", button, gutter, lineStyle.Render(sign), code)
+}
+
+// renderSplitLine draws one side-by-side row: left and right columns of
+// equal (±1) width separated by a gutter rule. Returns the row and the
+// column index where the right half starts, so mouse clicks can be routed
+// to the correct side.
+func (m *Model) renderSplitLine(lexer chroma.Lexer, left diffparse.Line, hasLeft, isCursorLeft bool, right diffparse.Line, hasRight, isCursorRight bool) (string, int) {
+	leftWidth := (m.width - 1) / 2
+	if leftWidth < 0 {
+		leftWidth = 0
+	}
+	rightWidth := m.width - 1 - leftWidth
+	if rightWidth < 0 {
+		rightWidth = 0
+	}
+
+	leftStr := m.renderSplitSide(lexer, left, hasLeft, isCursorLeft, leftWidth)
+	rightStr := m.renderSplitSide(lexer, right, hasRight, isCursorRight, rightWidth)
+	return leftStr + gutterStyle.Render("│") + rightStr, leftWidth + 1
+}
+
+// renderSplitSide draws one column (old or new) of a side-by-side row: the
+// comment button, line number, +/- sign, and (width-truncated) code — or
+// blank space if this side has no line, e.g. an added line has no old-file
+// counterpart.
+func (m *Model) renderSplitSide(lexer chroma.Lexer, l diffparse.Line, has, isCursor bool, width int) string {
+	if !has {
+		return padToWidth("", width)
+	}
+
+	sign := " "
+	lineStyle := lipgloss.NewStyle()
+	switch l.Op {
+	case diffparse.OpAdd:
+		sign = "+"
+		lineStyle = addStyle
+	case diffparse.OpDelete:
+		sign = "-"
+		lineStyle = delStyle
+	}
+	if isCursor {
+		lineStyle = lineStyle.Background(cursorLineBg)
+	}
+
+	changed := l.Op != diffparse.OpContext
+	button := commentButtonBlank
+	if changed {
+		button = commentBtnStyle.Render(commentButtonGlyph)
+	}
+
+	prefixWidth := lipgloss.Width(commentButtonGlyph) + 1 + 1 + 1 // button + space + sign + space
+	var gutter string
+	if m.lineNumbers {
+		lineNo := "    "
+		n := l.NewLineNo
+		if l.Op == diffparse.OpDelete {
+			n = l.OldLineNo
+		}
+		if n > 0 {
+			lineNo = fmt.Sprintf("%4d", n)
+		}
+		gutter = gutterStyle.Render(lineNo)
+		if isCursor {
+			gutter = gutterStyle.Background(cursorLineBg).Render(lineNo)
+		}
+		prefixWidth += 4 + 1 // number + space
+	}
+
+	budget := max(width-prefixWidth, 0)
+	truncated := truncateToWidth(l.Content, budget)
+	code := highlight(lexer, &m.style, truncated)
+	if code == "" {
+		code = truncated
+	}
+
+	var line string
+	if m.lineNumbers {
+		line = fmt.Sprintf("%s %s %s %s", button, gutter, lineStyle.Render(sign), code)
+	} else {
+		line = fmt.Sprintf("%s %s %s", button, lineStyle.Render(sign), code)
+	}
+	return padToWidth(line, width)
 }
 
 // highlight renders a single line of source with chroma, returning ANSI

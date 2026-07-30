@@ -307,6 +307,26 @@ func TestCommentCardRespectsNarrowPaneWidth(t *testing.T) {
 	assertNoLineExceedsWidth(t, m)
 }
 
+// TestUnifiedViewRespectsNarrowPaneWidth guards a bug where renderLine (the
+// unified/default view) never truncated a diff line's content to the pane
+// width — unlike renderSplitSide, which already did — so a long source line
+// spilled out past the box border instead of being cut off.
+func TestUnifiedViewRespectsNarrowPaneWidth(t *testing.T) {
+	m := New()
+	m.SetSize(40, 20)
+	m.SetFile(diffparse.FileDiff{
+		NewName: "example.go",
+		Hunks: []diffparse.Hunk{{
+			Header: "@@ -1,1 +1,1 @@",
+			Lines: []diffparse.Line{
+				{Op: diffparse.OpAdd, NewLineNo: 1, Content: strings.Repeat("x", 200)},
+			},
+		}},
+	})
+
+	assertNoLineExceedsWidth(t, m)
+}
+
 func TestBoxWidthResizesLiveWhileDraftOpen(t *testing.T) {
 	m := New()
 	m.SetSize(100, 20)
@@ -357,5 +377,148 @@ func TestDraftBoxSameWidthAndIndentAsCommentCard(t *testing.T) {
 	}
 	if !strings.HasPrefix(cardTop, commentThreadIndent) || !strings.HasPrefix(draftTop, commentThreadIndent) {
 		t.Fatalf("expected both to share the same left indent %q\ncard:  %q\ndraft: %q", commentThreadIndent, cardTop, draftTop)
+	}
+}
+
+func TestKeyVTogglesSplitView(t *testing.T) {
+	m := newTestModel()
+	if m.SplitView() {
+		t.Fatal("expected unified view by default")
+	}
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+	if !m.SplitView() {
+		t.Fatal("expected \"v\" to switch to split view")
+	}
+
+	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+	if m.SplitView() {
+		t.Fatal("expected a second \"v\" to switch back to unified view")
+	}
+}
+
+func TestSplitViewRespectsNarrowPaneWidth(t *testing.T) {
+	m := New()
+	m.SetSize(40, 20)
+	m.SetFile(testFile())
+	m.SetSplitView(true)
+
+	assertNoLineExceedsWidth(t, m)
+}
+
+// TestSplitViewPairsDeleteAndAddRuns guards the row-pairing heuristic: the
+// test file has one delete run (1 line) and one add run (2 lines) — GitHub's
+// split view zips them index-wise into shared rows, so the first add lines
+// up next to the delete, and the extra add gets a blank left side.
+func TestSplitViewPairsDeleteAndAddRuns(t *testing.T) {
+	m := newTestModel()
+	m.SetSplitView(true)
+
+	var splitRows []rowMeta
+	for _, r := range m.rows {
+		if r.splitRow {
+			splitRows = append(splitRows, r)
+		}
+	}
+	if len(splitRows) != 3 {
+		t.Fatalf("expected 3 split rows (1 context + 1 paired delete/add + 1 add-only), got %d", len(splitRows))
+	}
+
+	context, pair, addOnly := splitRows[0], splitRows[1], splitRows[2]
+	if context.leftOrdinal != 0 || context.rightOrdinal != 0 {
+		t.Fatalf("expected the context row's left and right ordinal to both be 0, got left=%d right=%d", context.leftOrdinal, context.rightOrdinal)
+	}
+	if pair.leftOrdinal != 1 || pair.rightOrdinal != 2 {
+		t.Fatalf("expected the delete (ordinal 1) paired with the first add (ordinal 2), got left=%d right=%d", pair.leftOrdinal, pair.rightOrdinal)
+	}
+	if addOnly.leftOrdinal != -1 || addOnly.rightOrdinal != 3 {
+		t.Fatalf("expected the second add (ordinal 3) alone on the right with a blank left, got left=%d right=%d", addOnly.leftOrdinal, addOnly.rightOrdinal)
+	}
+}
+
+func TestSplitViewClickOnLeftButtonOpensDraftOnDeleteLine(t *testing.T) {
+	m := newTestModel()
+	m.SetSplitView(true)
+
+	// Row 0 is the hunk header, row 1 the context row, row 2 the
+	// delete/add pair row. Click within the left button's columns.
+	msg := tea.MouseMsg{X: 1, Y: 2, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	m, _, _ = m.Update(msg)
+	if !m.DraftActive() {
+		t.Fatal("expected click on left button column to open the draft box")
+	}
+	line, ok := m.CursorTarget()
+	if !ok || line != 2 {
+		t.Fatalf("expected cursor on the delete line (old-file line 2), got %d (ok=%v)", line, ok)
+	}
+}
+
+func TestSplitViewClickOnRightButtonOpensDraftOnAddLine(t *testing.T) {
+	m := newTestModel()
+	m.SetSplitView(true)
+
+	midX := m.rows[2].midX
+	msg := tea.MouseMsg{X: midX + 1, Y: 2, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	m, _, _ = m.Update(msg)
+	if !m.DraftActive() {
+		t.Fatal("expected click on right button column to open the draft box")
+	}
+	line, ok := m.CursorTarget()
+	if !ok || line != 2 {
+		t.Fatalf("expected cursor on the add line (new-file line 2), got %d (ok=%v)", line, ok)
+	}
+}
+
+func TestSplitViewClickOnSeparatorDoesNothing(t *testing.T) {
+	m := newTestModel()
+	m.SetSplitView(true)
+	before := m.cursor
+
+	midX := m.rows[2].midX
+	msg := tea.MouseMsg{X: midX - 1, Y: 2, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	m, _, _ = m.Update(msg)
+	if m.DraftActive() {
+		t.Fatal("clicking the column separator should never open the draft box")
+	}
+	if m.cursor != before {
+		t.Fatalf("cursor should not move when clicking the separator, was %d now %d", before, m.cursor)
+	}
+}
+
+// TestSplitViewArrowKeysAlwaysMoveToADifferentRow guards a bug where a
+// delete/add pair sharing one visual row (ordinals 1 and 2 both render on
+// row 2, see TestSplitViewPairsDeleteAndAddRuns) made a "down" press from
+// ordinal 1 to ordinal 2 look like it did nothing: the cursor ordinal moved
+// but cursorRow stayed put, so the highlighted row never changed. Every
+// keypress should move the highlighted row when there is a next/previous
+// row to move to.
+func TestSplitViewArrowKeysAlwaysMoveToADifferentRow(t *testing.T) {
+	m := newTestModel()
+	m.SetSplitView(true)
+
+	// testFile's one hunk renders as 3 split rows: the context line, the
+	// delete/add pair sharing a row, and the trailing add-only line. So
+	// starting from the context row, there are exactly 2 more distinct rows
+	// to move through.
+	rows := []int{m.cursorRow}
+	for i := 0; i < 2; i++ {
+		m.MoveCursor(1)
+		rows = append(rows, m.cursorRow)
+	}
+
+	for i := 1; i < len(rows); i++ {
+		if rows[i] == rows[i-1] {
+			t.Fatalf("pressing down should always change the highlighted row, but step %d stayed on row %d (all rows: %v)", i, rows[i], rows)
+		}
+	}
+
+	// And walking back up should retrace the same rows in reverse.
+	for i := 0; i < 2; i++ {
+		m.MoveCursor(-1)
+		got := m.cursorRow
+		want := rows[len(rows)-2-i]
+		if got != want {
+			t.Fatalf("step %d up: expected to be back on row %d, got %d", i, want, got)
+		}
 	}
 }

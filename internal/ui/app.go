@@ -145,6 +145,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			a.layout()
 			return a, nil
+		case "v":
+			// A pane-level view toggle, same as "m" above — handled here
+			// rather than left to reach diffview only when it has focus
+			// (a.focus == focusDiff), since the sidebar has focus by
+			// default and would otherwise silently swallow the keypress.
+			a.diffview.SetSplitView(!a.diffview.SplitView())
+			return a, nil
 		case "r":
 			return a.reloadAnnotations()
 		}
@@ -314,7 +321,7 @@ func (a App) View() string {
 		footer = statusStyle.Render(a.statusMsg)
 	} else {
 		footer = statusStyle.Render(strings.Join([]string{
-			"↑/↓ or j/k: navigate", "tab: switch pane", "c or click [+]: comment", "r: refresh", "m: toggle layout", "q: quit",
+			"↑/↓ or j/k: navigate", "tab: switch pane", "c or click [+]: comment", "r: refresh", "m: toggle layout", "v: unified/split diff", "q: quit",
 		}, "  •  "))
 	}
 
