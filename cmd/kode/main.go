@@ -15,6 +15,7 @@ import (
 	"github.com/mansooranis/kode/internal/ui"
 	"github.com/mansooranis/kode/internal/ui/explain"
 	"github.com/mansooranis/kode/internal/vcs/git"
+	"github.com/mansooranis/kode/internal/vcs/github"
 )
 
 func main() {
@@ -47,6 +48,9 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	case len(args) >= 1 && args[0] == "pr":
+		runPR(cfg, args[1:])
+		return
 	}
 
 	// Best-effort: keep the global skills dir in step with this binary. A
@@ -68,22 +72,31 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := runReview(cfg, diffText); err != nil {
+		fmt.Fprintf(os.Stderr, "kode: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runReview parses diffText and opens the shared TUI review app. Both the
+// local git path above and runPR below funnel into this, so a GitHub PR
+// diff gets identical review functionality (split view, comments,
+// annotations) to a local diff.
+func runReview(cfg config.Config, diffText []byte) error {
 	changeset, err := diffparse.Parse(diffText)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "kode: failed to parse diff: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to parse diff: %w", err)
 	}
 
 	if len(changeset.Files) == 0 {
 		fmt.Println("kode: no changes to review")
-		return
+		return nil
 	}
 
 	store := annotate.NewStore()
 	store.SetPersistPath(cfg.Annotations.FilePath)
 	if _, err := store.Reload(cfg.Annotations.FilePath); err != nil {
-		fmt.Fprintf(os.Stderr, "kode: failed to load %s: %v\n", cfg.Annotations.FilePath, err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load %s: %w", cfg.Annotations.FilePath, err)
 	}
 
 	p := tea.NewProgram(ui.NewApp(cfg, changeset, store, cfg.Annotations.FilePath), tea.WithAltScreen(), tea.WithMouseCellMotion())
@@ -97,7 +110,31 @@ func main() {
 		go p.Send(ui.AnnotationAddedMsg(a))
 	})
 
-	if _, err := p.Run(); err != nil {
+	_, err = p.Run()
+	return err
+}
+
+// runPR reviews a GitHub pull request's diff, fetched via the gh CLI. It
+// checks gh is installed and authenticated up front so a missing/unauthed
+// gh fails with one clear instruction instead of a raw exec error.
+func runPR(cfg config.Config, args []string) {
+	if err := github.CheckAvailable(); err != nil {
+		fmt.Fprintf(os.Stderr, "kode: %v\n", err)
+		os.Exit(1)
+	}
+
+	var ref string
+	if len(args) >= 1 {
+		ref = args[0]
+	}
+
+	diffText, err := github.New("").Diff(ref)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kode: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := runReview(cfg, diffText); err != nil {
 		fmt.Fprintf(os.Stderr, "kode: %v\n", err)
 		os.Exit(1)
 	}
@@ -112,6 +149,8 @@ func printHelp() {
 Usage:
   kode                Review the current working diff (git diff) in the TUI
   kode show <ref>     Review a single commit, e.g. "kode show HEAD~1"
+  kode pr [number]    Review a GitHub PR diff (current branch's PR if omitted).
+                       Requires the gh CLI installed and authenticated.
   kode explain        Open the read-only codebase walkthrough viewer
   kode skills sync    Copy kode's bundled skills into your global skills folder now
   kode skill install  Copy the kode-comments skill into ~/.claude/skills, for Claude Code
