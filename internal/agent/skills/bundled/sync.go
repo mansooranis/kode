@@ -1,6 +1,7 @@
 package bundled
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,37 @@ func EnsureSynced(dir, version string, force bool) (synced bool, names []string,
 
 	_ = os.WriteFile(marker, []byte(version), 0o644)
 	return true, names, nil
+}
+
+// InstallClaudeSkill writes one bundled skill into dir/<name>/SKILL.md,
+// matching Claude Code's own skill folder layout (as opposed to Sync's flat
+// "<name>.md" layout for kode's own agent). dir is typically
+// ~/.claude/skills, Claude Code's global skills folder, so a separate
+// `claude` session picks the skill up without this repo's project-local
+// .claude/skills/kode-comments symlink. Returns the path written to.
+func InstallClaudeSkill(dir, name string) (string, error) {
+	dir = expandHome(dir)
+
+	skills, err := All()
+	if err != nil {
+		return "", err
+	}
+
+	for _, s := range skills {
+		if s.Name != name {
+			continue
+		}
+		skillDir := filepath.Join(dir, s.Name)
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			return "", err
+		}
+		path := filepath.Join(skillDir, "SKILL.md")
+		if err := os.WriteFile(path, []byte(s.Body), 0o644); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+	return "", fmt.Errorf("unknown bundled skill %q", name)
 }
 
 func expandHome(path string) string {

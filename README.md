@@ -73,11 +73,14 @@ Run `kode help` at any time to see every command kode understands.
   its version changed and re-copies its bundled skills into that folder, so
   you never have to do it by hand. Run `kode skills sync` to force it right
   away.
-- **Live comments from another agent session.** kode hosts a small local MCP
-  server while it is running (`127.0.0.1:7378` by default). Point a separate
-  agent session, such as Claude Code, at it and that agent can read the open
-  diff and leave comments on it, which show up in your kode window right
-  away. kode prints the one-time setup command it needs when it starts.
+- **Comments from another agent session.** kode's comments and diagrams live
+  in a JSON file in the repo (`.kode/annotations.json` by default — see
+  below), so a separate agent session, such as Claude Code, can read and
+  write them directly without any live connection to kode. Run
+  `kode skill install` once to copy the `kode-comments` skill into
+  `~/.claude/skills`, so any `claude` session knows the file format and how
+  to render Mermaid diagrams into it; press `r` in kode to pick up what it
+  writes.
 - **Codebase walkthroughs.** `kode explain` opens a read-only viewer for
   annotations and Mermaid diagrams an agent has already written about a
   codebase, useful for onboarding or documenting how something works without
@@ -94,9 +97,8 @@ Anything you don't set keeps its default value. Notable settings:
 - `theme`, `mode` (`auto`, `split`, or `stack`), `vcs` (`auto`, `git`, `jj`,
   or `sapling`), `line_numbers`, `tab_width`, `wrap_lines`
 - `[agent]`: `enabled`, `provider`, `model`, `effort`, `skills_path`
-- `[mcp_server]`: `enabled`, `port`, the local server kode hosts for other
-  agents to connect to
-- `[annotations]`: `file`, where comments are persisted
+- `[annotations]`: `file`, where comments and diagrams are persisted, and
+  where another agent session should read/write them directly
 - `[keybindings]`: remap any key to a different action
 
 ## Development

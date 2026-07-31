@@ -2,9 +2,9 @@
 // explanations (and Mermaid-rendered diagrams) an agent has left in the
 // shared annotate.Store, grouped by file and ordered by line — a generated
 // walkthrough, not a diff review. It has no local comment authoring; notes
-// are meant to arrive from an external agent connected over kode's MCP
-// server (see .claude/skills/kode-comments/SKILL.md), and this view just
-// displays whatever's there, live.
+// are meant to arrive from an external agent writing directly to the
+// annotations JSON file (see .claude/skills/kode-comments/SKILL.md), and
+// this view just displays whatever's there once refreshed ("r").
 package explain
 
 import (
@@ -21,8 +21,8 @@ import (
 )
 
 // AnnotationAddedMsg is sent whenever the shared store gains a new entry
-// (from a live MCP call or a JSON file reload), mirroring ui.AnnotationAddedMsg
-// so the viewer repaints immediately without polling.
+// (from a JSON file reload), mirroring ui.AnnotationAddedMsg so the viewer
+// repaints immediately without polling.
 type AnnotationAddedMsg annotate.Annotation
 
 const titleHeight = 1
@@ -428,13 +428,10 @@ func emptyStateText(annotationsPath string) string {
 	return strings.Join([]string{
 		"No annotations yet.",
 		"",
-		"Connect an agent (e.g. Claude Code) to kode's MCP server and ask it to",
-		"explain this codebase — it will leave notes and diagrams here as it goes.",
+		"Ask an agent (e.g. Claude Code) to explain this codebase — with the",
+		"kode-comments skill installed (\"kode skill install\"), it will write",
+		fmt.Sprintf("notes and diagrams directly to %s as it goes.", annotationsPath),
 		"",
-		"One-time setup (kode also prints this on startup):",
-		"  claude mcp add --transport http kode http://127.0.0.1:<port>/mcp",
-		"",
-		fmt.Sprintf("Annotations also persist to %s — press r to refresh after", annotationsPath),
-		"an agent pushes notes there directly.",
+		"Press r to refresh once it has written some.",
 	}, "\n")
 }
