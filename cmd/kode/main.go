@@ -1,10 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"time"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -12,9 +11,7 @@ import (
 	"github.com/mansooranis/kode/internal/annotate"
 	"github.com/mansooranis/kode/internal/buildinfo"
 	"github.com/mansooranis/kode/internal/config"
-	"github.com/mansooranis/kode/internal/diagram"
 	"github.com/mansooranis/kode/internal/diffparse"
-	"github.com/mansooranis/kode/internal/mcpserver"
 	"github.com/mansooranis/kode/internal/ui"
 	"github.com/mansooranis/kode/internal/ui/explain"
 	"github.com/mansooranis/kode/internal/vcs/git"
@@ -40,6 +37,12 @@ func main() {
 		return
 	case len(args) >= 2 && args[0] == "skills" && args[1] == "sync":
 		if err := syncSkills(cfg, true); err != nil {
+			fmt.Fprintf(os.Stderr, "kode: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case len(args) >= 2 && args[0] == "skill" && args[1] == "install":
+		if err := installClaudeSkill(); err != nil {
 			fmt.Fprintf(os.Stderr, "kode: %v\n", err)
 			os.Exit(1)
 		}
@@ -94,19 +97,6 @@ func main() {
 		go p.Send(ui.AnnotationAddedMsg(a))
 	})
 
-	var mcpSrv *mcpserver.Server
-	if cfg.MCPServer.Enabled {
-		mcpSrv = mcpserver.New(store, changeset, diagram.NewCLIRenderer(), cfg.MCPServer.Port)
-		mcpSrv.Start()
-		fmt.Printf("kode: mcp server listening on http://%s/mcp\n", mcpSrv.Addr())
-		fmt.Printf("kode: one-time setup: claude mcp add --transport http kode http://%s/mcp\n", mcpSrv.Addr())
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			mcpSrv.Close(ctx)
-		}()
-	}
-
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "kode: %v\n", err)
 		os.Exit(1)
@@ -124,13 +114,16 @@ Usage:
   kode show <ref>     Review a single commit, e.g. "kode show HEAD~1"
   kode explain        Open the read-only codebase walkthrough viewer
   kode skills sync    Copy kode's bundled skills into your global skills folder now
+  kode skill install  Copy the kode-comments skill into ~/.claude/skills, for Claude Code
   kode version        Print the installed version
   kode help           Show this message
 
-While the diff viewer is open, kode also starts a local MCP server (see the
-"mcp_server" section of your config) so a separate agent session, such as
-Claude Code, can read the diff and leave comments on it live. Run
-"kode explain" the same way to get annotations and diagrams for a codebase
+Comments and diagrams a separate agent session (such as Claude Code) leaves
+while exploring this repo are read from and written directly to the
+annotations file (see the "annotations" section of your config), rather than
+over any live connection to kode. Run "kode skill install" once so that
+session knows the annotations file format; see .claude/skills/kode-comments.
+Run "kode explain" to browse the resulting notes and diagrams as a
 walkthrough instead of a diff.
 
 Configuration lives at .kode/config.toml in your project, falling back to
@@ -158,9 +151,9 @@ func syncSkills(cfg config.Config, force bool) error {
 
 // runExplain starts kode's read-only "learning" viewer: no diff/VCS
 // involved, just whatever annotations/diagrams already exist in the store
-// (typically pushed there by an external agent connected over MCP, per
-// .claude/skills/kode-comments/SKILL.md) plus the same MCP server so an
-// agent can keep adding to it live while it's open.
+// (typically written directly to cfg.Annotations.FilePath by an external
+// agent working off .claude/skills/kode-comments/SKILL.md). Press "r" to
+// refresh and pick up anything written since the viewer opened.
 func runExplain(cfg config.Config) {
 	store := annotate.NewStore()
 	store.SetPersistPath(cfg.Annotations.FilePath)
@@ -175,21 +168,27 @@ func runExplain(cfg config.Config) {
 		go p.Send(explain.AnnotationAddedMsg(a))
 	})
 
-	var mcpSrv *mcpserver.Server
-	if cfg.MCPServer.Enabled {
-		mcpSrv = mcpserver.New(store, diffparse.Changeset{}, diagram.NewCLIRenderer(), cfg.MCPServer.Port)
-		mcpSrv.Start()
-		fmt.Printf("kode: mcp server listening on http://%s/mcp\n", mcpSrv.Addr())
-		fmt.Printf("kode: one-time setup: claude mcp add --transport http kode http://%s/mcp\n", mcpSrv.Addr())
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			mcpSrv.Close(ctx)
-		}()
-	}
-
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "kode: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// installClaudeSkill copies the kode-comments skill into
+// ~/.claude/skills/kode-comments/SKILL.md — Claude Code's global skills
+// folder — so a `claude` session started in any project (not just this repo,
+// which already has it as a project skill via .claude/skills) knows how to
+// read and write kode's annotations file directly.
+func installClaudeSkill() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("install skill: %w", err)
+	}
+	dir := filepath.Join(home, ".claude", "skills")
+	path, err := bundled.InstallClaudeSkill(dir, "kode-comments")
+	if err != nil {
+		return fmt.Errorf("install skill: %w", err)
+	}
+	fmt.Printf("kode: installed kode-comments skill to %s\n", path)
+	return nil
 }

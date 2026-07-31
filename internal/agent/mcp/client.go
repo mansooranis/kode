@@ -1,7 +1,6 @@
 // Package mcp is kode's MCP CLIENT: it connects OUT to external MCP servers
 // configured under [[mcp.servers]] and exposes their tools to agent.Core
-// alongside kode's own native tools. This is distinct from internal/mcpserver,
-// which hosts kode's own MCP SERVER for external callers like Claude Code.
+// alongside kode's own native tools.
 package mcp
 
 import (

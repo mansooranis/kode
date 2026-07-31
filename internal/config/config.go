@@ -26,7 +26,6 @@ type Config struct {
 	Keybindings map[string]string `toml:"keybindings"`
 	Agent       AgentConfig       `toml:"agent"`
 	MCP         MCPConfig         `toml:"mcp"`
-	MCPServer   MCPServerConfig   `toml:"mcp_server"`
 	Annotations AnnotationsConfig `toml:"annotations"`
 	Export      ExportConfig      `toml:"export"`
 }
@@ -47,6 +46,8 @@ type ProviderSettings struct {
 	BaseURL   string `toml:"base_url"`
 }
 
+// MCPConfig lists MCP servers kode's embedded agent connects OUT to as a
+// client (see internal/agent/mcp), alongside its own native tools.
 type MCPConfig struct {
 	Servers []MCPServer `toml:"servers"`
 }
@@ -57,14 +58,6 @@ type MCPServer struct {
 	Command   string   `toml:"command"`
 	Args      []string `toml:"args"`
 	URL       string   `toml:"url"`
-}
-
-// MCPServerConfig controls kode's own hosted MCP server — the one an
-// external client like Claude Code connects to, distinct from MCPConfig
-// (servers kode connects OUT to as a client).
-type MCPServerConfig struct {
-	Enabled bool `toml:"enabled"`
-	Port    int  `toml:"port"`
 }
 
 // AnnotationsConfig points at the JSON file annotations are persisted to and
@@ -96,10 +89,6 @@ func Default() Config {
 			SkillsPath:         "~/.config/kode/skills",
 			AnnotationsEnabled: true,
 			DiagramsEnabled:    true,
-		},
-		MCPServer: MCPServerConfig{
-			Enabled: true,
-			Port:    7378,
 		},
 		Annotations: AnnotationsConfig{
 			FilePath: ".kode/annotations.json",

@@ -3,18 +3,23 @@ module github.com/mansooranis/kode
 go 1.26.5
 
 require (
-	github.com/BurntSushi/toml v1.6.0 // indirect
-	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.61.0 // indirect
+	github.com/BurntSushi/toml v1.6.0
+	github.com/alecthomas/chroma/v2 v2.27.0
+	github.com/anthropics/anthropic-sdk-go v1.61.0
+	github.com/bluekeyes/go-gitdiff v0.9.0
+	github.com/charmbracelet/bubbles v1.0.0
+	github.com/charmbracelet/bubbletea v1.3.10
+	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/modelcontextprotocol/go-sdk v1.7.0
+	go.yaml.in/yaml/v4 v4.0.0-rc.2
+)
+
+require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/bluekeyes/go-gitdiff v0.9.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
-	github.com/charmbracelet/bubbles v1.0.0 // indirect
-	github.com/charmbracelet/bubbletea v1.3.10 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
-	github.com/charmbracelet/lipgloss v1.1.0 // indirect
 	github.com/charmbracelet/x/ansi v0.11.6 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
@@ -29,7 +34,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
-	github.com/modelcontextprotocol/go-sdk v1.7.0 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
@@ -44,7 +48,6 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
