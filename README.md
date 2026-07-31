@@ -47,7 +47,11 @@ kode
 ```
 
 That opens the diff of your working tree in the TUI. To look at a specific
-commit instead, run `kode show <ref>`, for example `kode show HEAD~1`.
+commit instead, run `kode show <ref>`, for example `kode show HEAD~1`. To
+review a GitHub pull request, run `kode pr <number>` (or just `kode pr` to
+review the PR for your current branch) — this requires the
+[GitHub CLI](https://cli.github.com) (`gh`) to be installed and
+authenticated (`gh auth login`); kode will tell you if either is missing.
 
 Run `kode help` at any time to see every command kode understands.
 
@@ -87,6 +91,9 @@ Run `kode help` at any time to see every command kode understands.
   touching a diff at all.
 - **Works with git, jj, and Sapling.** kode shells out to whichever version
   control tool your project uses to produce the diff it renders.
+- **GitHub PR review.** `kode pr [number]` fetches a pull request's diff via
+  the `gh` CLI and opens it in the same TUI as a local diff, with the same
+  split view, inline comments, and agent support.
 
 ## Configuration
 
