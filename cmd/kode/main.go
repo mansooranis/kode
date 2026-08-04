@@ -211,7 +211,7 @@ func syncSkills(cfg config.Config, force bool) error {
 	if force {
 		fmt.Printf("kode: synced %d skill(s) to %s: %v\n", len(names), cfg.Agent.SkillsPath, names)
 	} else if synced && len(names) > 0 {
-		fmt.Fprintf(os.Stderr, "kode: updated bundled skills in %s for v%s\n", cfg.Agent.SkillsPath, version)
+		fmt.Fprintf(os.Stderr, "kode: updated bundled skills in %s for %s\n", cfg.Agent.SkillsPath, version)
 	}
 	return nil
 }
