@@ -103,6 +103,11 @@ Anything you don't set keeps its default value. Notable settings:
 
 - `theme`, `mode` (`auto`, `split`, or `stack`), `vcs` (`auto`, `git`, `jj`,
   or `sapling`), `line_numbers`, `tab_width`, `wrap_lines`
+- `check_updates` (default `true`): on startup, check GitHub once a day for a
+  newer release and show a banner in the bottom-right corner if one's out.
+  Only compares against tagged release builds (`make build`/`make install`);
+  a `dev` build never checks. No network call, download, or install happens
+  beyond that GET — set to `false` to disable entirely.
 - `[agent]`: `enabled`, `provider`, `model`, `effort`, `skills_path`
 - `[annotations]`: `file`, where comments and diagrams are persisted, and
   where another agent session should read/write them directly

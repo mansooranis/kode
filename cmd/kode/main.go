@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/mansooranis/kode/internal/diffparse"
 	"github.com/mansooranis/kode/internal/ui"
 	"github.com/mansooranis/kode/internal/ui/explain"
+	"github.com/mansooranis/kode/internal/update"
 	"github.com/mansooranis/kode/internal/vcs/git"
 	"github.com/mansooranis/kode/internal/vcs/github"
 )
@@ -105,6 +107,7 @@ func runReview(cfg config.Config, diffText []byte) error {
 	}
 
 	p := tea.NewProgram(ui.NewApp(cfg, changeset, store, cfg.Annotations.FilePath), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	checkForUpdate(p, cfg)
 
 	store.OnChange(func(a annotate.Annotation) {
 		// Add can be called synchronously from within Update itself (a local
@@ -216,6 +219,29 @@ func syncSkills(cfg config.Config, force bool) error {
 	return nil
 }
 
+// checkForUpdate asks GitHub (via a cached, rate-limited check) whether a
+// newer kode release exists, and if so sends update.AvailableMsg into the
+// running program so it can show a banner. Runs in its own goroutine so a
+// slow or unreachable network never delays the TUI opening; failures and
+// "no update" are silently ignored; disable entirely with check_updates =
+// false in config.
+func checkForUpdate(p *tea.Program, cfg config.Config) {
+	if !cfg.CheckUpdates {
+		return
+	}
+	go func() {
+		cachePath, err := update.CachePath()
+		if err != nil {
+			return
+		}
+		result, err := update.Check(context.Background(), buildinfo.Version, cachePath)
+		if err != nil || !result.Available {
+			return
+		}
+		p.Send(update.AvailableMsg{Latest: result.Latest})
+	}()
+}
+
 // runExplain starts kode's read-only "learning" viewer: no diff/VCS
 // involved, just whatever annotations/diagrams already exist in the store
 // (typically written directly to cfg.Annotations.FilePath by an external
@@ -230,6 +256,7 @@ func runExplain(cfg config.Config) {
 	}
 
 	p := tea.NewProgram(explain.NewApp(store, cfg.Annotations.FilePath), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	checkForUpdate(p, cfg)
 
 	store.OnChange(func(a annotate.Annotation) {
 		go p.Send(explain.AnnotationAddedMsg(a))
