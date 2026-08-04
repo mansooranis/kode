@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/mansooranis/kode/internal/annotate"
 	"github.com/mansooranis/kode/internal/buildinfo"
 	"github.com/mansooranis/kode/internal/config"
+	"github.com/mansooranis/kode/internal/diagram"
 	"github.com/mansooranis/kode/internal/diffparse"
 	"github.com/mansooranis/kode/internal/ui"
 	"github.com/mansooranis/kode/internal/ui/explain"
@@ -50,6 +52,9 @@ func main() {
 		return
 	case len(args) >= 1 && args[0] == "pr":
 		runPR(cfg, args[1:])
+		return
+	case len(args) >= 1 && args[0] == "render-diagram":
+		runRenderDiagram()
 		return
 	}
 
@@ -140,6 +145,28 @@ func runPR(cfg config.Config, args []string) {
 	}
 }
 
+// runRenderDiagram reads Mermaid source from stdin and prints its
+// ASCII/Unicode rendering to stdout. It exists so external agent sessions
+// (see .claude/skills/kode-comments) can pre-render diagrams for annotations
+// via the kode binary itself, rather than requiring a separate mermaid-ascii
+// install — diagram.LibRenderer calls mermaid-ascii's rendering package
+// in-process.
+func runRenderDiagram() {
+	src, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kode: failed to read mermaid source from stdin: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := diagram.NewLibRenderer().Render(string(src))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kode: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(out)
+}
+
 // printHelp lists every command kode understands. Keep this in sync with the
 // switch in main(): it's the one place a new user (or a Homebrew "kode
 // --help" pipe) should be able to see everything the binary can do.
@@ -154,6 +181,7 @@ Usage:
   kode explain        Open the read-only codebase walkthrough viewer
   kode skills sync    Copy kode's bundled skills into your global skills folder now
   kode skill install  Copy the kode-comments skill into ~/.claude/skills, for Claude Code
+  kode render-diagram Render Mermaid source (stdin) to ASCII/Unicode art (stdout)
   kode version        Print the installed version
   kode help           Show this message
 

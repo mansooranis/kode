@@ -1,6 +1,6 @@
 ---
 name: kode-comments
-description: Use when the user wants to read reviewer comments/annotations from a kode session (diff review or `kode explain`), wants Claude to add/reply to comments on a diff open in kode, or wants Claude to explain/document a codebase by leaving annotations and Mermaid diagrams for `kode explain` to display. Covers reading and writing kode's annotations.json file directly, and rendering Mermaid diagrams to terminal art with the mermaid-ascii CLI.
+description: Use when the user wants to read reviewer comments/annotations from a kode session (diff review or `kode explain`), wants Claude to add/reply to comments on a diff open in kode, or wants Claude to explain/document a codebase by leaving annotations and Mermaid diagrams for `kode explain` to display. Covers reading and writing kode's annotations.json file directly, and rendering Mermaid diagrams to terminal art with `kode render-diagram`.
 ---
 
 # kode comments
@@ -60,19 +60,19 @@ notes in one pass (e.g. while exploring a codebase) — read once, append everyt
 
 ## Diagrams
 
-For flowcharts/control-flow/architecture diagrams, kode uses
-[`mermaid-ascii`](https://github.com/AlexanderGrooff/mermaid-ascii) to turn Mermaid source into
-terminal art. Do the same rendering step yourself with the CLI (kode expects diagrams to
-already be pre-rendered in `text`, since the TUI itself has no Mermaid renderer built in):
+For flowcharts/control-flow/architecture diagrams, kode renders Mermaid source into terminal art
+using [`mermaid-ascii`](https://github.com/AlexanderGrooff/mermaid-ascii)'s rendering package,
+bundled directly into the `kode` binary. Do the same rendering step yourself with `kode render-diagram`
+(kode expects diagrams to already be pre-rendered in `text`, since the TUI itself has no Mermaid
+renderer built in):
 
 ```sh
-echo '<mermaid source>' | mermaid-ascii --file -
+echo '<mermaid source>' | kode render-diagram
 ```
 
-If the `mermaid-ascii` binary isn't on `$PATH`, tell the user it's needed for diagram rendering
-(`go install github.com/AlexanderGrooff/mermaid-ascii@latest`, or their preferred install
-method) and fall back to plain `comment` annotations describing the flow in prose until it's
-available — don't hand-draw ASCII art as a substitute; it won't match kode's rendering.
+This requires no separate install — it's the same `kode` binary already on `$PATH`. If it fails
+(e.g. unsupported diagram syntax), fall back to plain `comment` annotations describing the flow
+in prose — don't hand-draw ASCII art as a substitute; it won't match kode's rendering.
 
 Once you have the rendered output, write an annotation with `"kind": "diagram"`, `"text"` set
 to that rendered output exactly as produced (including its own internal spacing/newlines —
