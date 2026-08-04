@@ -4,10 +4,11 @@
 package diagram
 
 import (
-	"bytes"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	mmascii "github.com/AlexanderGrooff/mermaid-ascii/cmd"
+	mmconfig "github.com/AlexanderGrooff/mermaid-ascii/pkg/diagram"
 )
 
 // Renderer turns Mermaid source into ready-to-display terminal art.
@@ -15,36 +16,20 @@ type Renderer interface {
 	Render(mermaidSource string) (string, error)
 }
 
-// CLIRenderer shells out to the mermaid-ascii binary
-// (github.com/AlexanderGrooff/mermaid-ascii), the same way internal/vcs/git
-// shells out to git — mermaid-ascii's own rendering logic lives in an
-// unexported, cobra-coupled package not meant for import as a library, so a
-// CLI call is the stable integration point.
-type CLIRenderer struct {
-	// Bin is the binary to invoke. Empty means "mermaid-ascii" on $PATH.
-	Bin string
+// LibRenderer calls mermaid-ascii's rendering package
+// (github.com/AlexanderGrooff/mermaid-ascii) in-process, so users don't need
+// a separate mermaid-ascii binary on $PATH.
+type LibRenderer struct{}
+
+func NewLibRenderer() LibRenderer {
+	return LibRenderer{}
 }
 
-func NewCLIRenderer() CLIRenderer {
-	return CLIRenderer{}
-}
-
-func (r CLIRenderer) Render(mermaidSource string) (string, error) {
-	bin := r.Bin
-	if bin == "" {
-		bin = "mermaid-ascii"
+func (LibRenderer) Render(mermaidSource string) (string, error) {
+	output, err := mmascii.RenderDiagram(mermaidSource, mmconfig.DefaultConfig())
+	if err != nil {
+		return "", fmt.Errorf("mermaid-ascii: %w", err)
 	}
 
-	cmd := exec.Command(bin, "--file", "-")
-	cmd.Stdin = strings.NewReader(mermaidSource)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("mermaid-ascii: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-
-	return strings.TrimRight(stdout.String(), "\n"), nil
+	return strings.TrimRight(output, "\n"), nil
 }
