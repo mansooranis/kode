@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mansooranis/kode/internal/annotate"
+	"github.com/mansooranis/kode/internal/update"
 )
 
 // AnnotationAddedMsg is sent whenever the shared store gains a new entry
@@ -56,7 +57,8 @@ type App struct {
 	filesBox box
 	mainBox  box
 
-	statusMsg string
+	statusMsg    string
+	updateBanner string // e.g. "v0.2.0"; empty means no update available
 }
 
 func NewApp(store *annotate.Store, annotationsPath string) App {
@@ -102,6 +104,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AnnotationAddedMsg:
 		a.refreshFiles()
 		a.render()
+		return a, nil
+
+	case update.AvailableMsg:
+		a.updateBanner = msg.Latest
 		return a, nil
 
 	case tea.KeyMsg:
@@ -257,13 +263,33 @@ func (a *App) render() {
 }
 
 var (
-	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	statusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	selectedFile = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	normalFile   = lipgloss.NewStyle()
-	gutterStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	lineNoStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	titleStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	statusStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	selectedFile      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	normalFile        = lipgloss.NewStyle()
+	gutterStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	lineNoStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	updateBannerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
 )
+
+// withUpdateBanner right-aligns banner within width columns, on the same row
+// as left — the footer's keybinding hints or status message. If there isn't
+// room for both, the banner wins (it's the more actionable of the two).
+func withUpdateBanner(width int, left, banner string) string {
+	if banner == "" {
+		return left
+	}
+	lw := lipgloss.Width(left)
+	bw := lipgloss.Width(banner)
+	gap := width - lw - bw
+	if gap < 1 {
+		if bw >= width {
+			return banner
+		}
+		return strings.Repeat(" ", width-bw) + banner
+	}
+	return left + strings.Repeat(" ", gap) + banner
+}
 
 func (a App) View() string {
 	if a.width == 0 {
@@ -304,6 +330,9 @@ func (a App) View() string {
 		footer = statusStyle.Render(strings.Join([]string{
 			"↑/↓ or j/k: navigate", "tab: switch pane", "r: refresh", "q: quit",
 		}, "  •  "))
+	}
+	if a.updateBanner != "" {
+		footer = withUpdateBanner(a.width, footer, updateBannerStyle.Render(fmt.Sprintf("update %s available", a.updateBanner)))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, body, footer)

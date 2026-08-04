@@ -22,6 +22,7 @@ type Config struct {
 	MenuBar               bool   `toml:"menu_bar"`
 	AgentNotes            bool   `toml:"agent_notes"`
 	TransparentBackground bool   `toml:"transparent_background"`
+	CheckUpdates          bool   `toml:"check_updates"`
 
 	Keybindings map[string]string `toml:"keybindings"`
 	Agent       AgentConfig       `toml:"agent"`
@@ -74,13 +75,14 @@ type ExportConfig struct {
 
 func Default() Config {
 	return Config{
-		Theme:       "dark",
-		Mode:        "auto",
-		VCS:         "auto",
-		LineNumbers: true,
-		TabWidth:    4,
-		MenuBar:     true,
-		AgentNotes:  true,
+		Theme:        "dark",
+		Mode:         "auto",
+		VCS:          "auto",
+		LineNumbers:  true,
+		TabWidth:     4,
+		MenuBar:      true,
+		AgentNotes:   true,
+		CheckUpdates: true,
 		Agent: AgentConfig{
 			Enabled:            true,
 			Provider:           "anthropic",

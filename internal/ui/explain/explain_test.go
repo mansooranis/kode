@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/mansooranis/kode/internal/annotate"
+	"github.com/mansooranis/kode/internal/update"
 )
 
 func TestRefreshFilesDedupesAndSorts(t *testing.T) {
@@ -39,6 +42,33 @@ func TestRenderNoteCardDiagramNotWrapped(t *testing.T) {
 	if !strings.Contains(joined.String(), "+---+") {
 		t.Fatalf("expected raw diagram art preserved verbatim, got:\n%s", joined.String())
 	}
+}
+
+func TestUpdateAvailableShowsBottomRightBanner(t *testing.T) {
+	s := annotate.NewStore()
+	a := NewApp(s, "/tmp/does-not-exist.json")
+
+	m, _ := a.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	a = m.(App)
+
+	m, _ = a.Update(update.AvailableMsg{Latest: "v9.9.9"})
+	a = m.(App)
+
+	footer := lastLine(a.View())
+	if !strings.Contains(footer, "v9.9.9") {
+		t.Fatalf("expected the update banner on the footer's own row, got footer:\n%q", footer)
+	}
+	if !strings.Contains(footer, "navigate") {
+		t.Fatalf("expected the keybinding hints to still be visible alongside the banner, got footer:\n%q", footer)
+	}
+	if !strings.HasSuffix(strings.TrimRight(footer, " "), "v9.9.9 available") {
+		t.Fatalf("expected the banner flush against the right edge, got footer:\n%q", footer)
+	}
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(s, "\n")
+	return lines[len(lines)-1]
 }
 
 func TestRenderSnippetOutOfRangeReturnsNil(t *testing.T) {

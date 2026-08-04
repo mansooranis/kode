@@ -9,6 +9,7 @@ import (
 	"github.com/mansooranis/kode/internal/annotate"
 	"github.com/mansooranis/kode/internal/config"
 	"github.com/mansooranis/kode/internal/diffparse"
+	"github.com/mansooranis/kode/internal/update"
 )
 
 func testChangeset() diffparse.Changeset {
@@ -105,5 +106,38 @@ func TestKeyVTogglesSplitViewRegardlessOfFocus(t *testing.T) {
 
 	if !app.diffview.SplitView() {
 		t.Fatal("expected \"v\" to switch to split view even while the sidebar has focus")
+	}
+}
+
+// TestUpdateAvailableShowsBottomRightBanner guards the placement: the banner
+// must land at the far right of the footer's own row, not push a new row or
+// overwrite the keybinding hints entirely at normal terminal widths.
+func TestUpdateAvailableShowsBottomRightBanner(t *testing.T) {
+	store := annotate.NewStore()
+	app := NewApp(config.Default(), testChangeset(), store, t.TempDir()+"/annotations.json")
+
+	// Wide enough that the footer's keybinding hints (~143 cols) and the
+	// banner both fit on the same row with room to spare.
+	m, _ := app.Update(tea.WindowSizeMsg{Width: 220, Height: 30})
+	app = m.(App)
+
+	m, _ = app.Update(update.AvailableMsg{Latest: "v9.9.9"})
+	app = m.(App)
+
+	view := app.View()
+	if !strings.Contains(view, "v9.9.9") {
+		t.Fatalf("expected the rendered view to contain the available version; view:\n%s", view)
+	}
+
+	lines := strings.Split(view, "\n")
+	footer := lines[len(lines)-1]
+	if !strings.Contains(footer, "v9.9.9") {
+		t.Fatalf("expected the update banner on the footer's own row, got footer:\n%q", footer)
+	}
+	if !strings.Contains(footer, "navigate") {
+		t.Fatalf("expected the keybinding hints to still be visible alongside the banner, got footer:\n%q", footer)
+	}
+	if !strings.HasSuffix(strings.TrimRight(footer, " "), "v9.9.9 available") {
+		t.Fatalf("expected the banner flush against the right edge, got footer:\n%q", footer)
 	}
 }
