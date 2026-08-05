@@ -35,9 +35,17 @@ const (
 )
 
 type Annotation struct {
-	ID        string    `json:"id,omitempty"`
-	File      string    `json:"file"`
-	Line      int       `json:"line"` // canonical line number: new-file line if present, else old-file line
+	ID   string `json:"id,omitempty"`
+	File string `json:"file"`
+	Line int    `json:"line"` // canonical line number: new-file line if present, else old-file line
+	// OldLine is true when Line is an old-file (pre-change) line number —
+	// only possible for a comment anchored to a pure deletion, which has no
+	// new-file counterpart. This disambiguates Line from a same-numbered
+	// new-file line elsewhere in the diff: old- and new-file numbering are
+	// independent sequences that can (and often do) land on the same
+	// integer, so without this flag two unrelated lines that happen to
+	// share a number would incorrectly share one comment thread.
+	OldLine   bool      `json:"old_line,omitempty"`
 	Author    string    `json:"author"`
 	Kind      string    `json:"kind,omitempty"` // "comment" (default, omitted) | "diagram"
 	Text      string    `json:"text"`
@@ -60,8 +68,8 @@ func (a Annotation) effectiveKind() string {
 // works because CreatedAt is fixed once (either loaded from the file or set
 // once at first Add) rather than recomputed per reload.
 func computeID(a Annotation) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%s\x00%s",
-		a.File, a.Line, a.Author, a.effectiveKind(), a.Text, a.CreatedAt.UTC().Format(time.RFC3339Nano))))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%t\x00%s\x00%s\x00%s\x00%s",
+		a.File, a.Line, a.OldLine, a.Author, a.effectiveKind(), a.Text, a.CreatedAt.UTC().Format(time.RFC3339Nano))))
 	return hex.EncodeToString(sum[:6])
 }
 
