@@ -12,10 +12,10 @@ import (
 )
 
 // findReplyRow returns the absolute row (0-indexed, matching m.rows) of the
-// "[Reply]" button attached to the given canonical line number.
-func findReplyRow(m Model, line int) (int, bool) {
+// "[Reply]" button attached to the given canonical line number/space.
+func findReplyRow(m Model, line int, old bool) (int, bool) {
 	for i, r := range m.rows {
-		if r.replyLine == line {
+		if r.replyKey == (lineKey{line: line, old: old}) {
 			return i, true
 		}
 	}
@@ -66,7 +66,7 @@ func TestKeyCOpensDraftOnCursorLine(t *testing.T) {
 func TestArrowKeysMoveCursorAndCursorTargetTracksIt(t *testing.T) {
 	m := newTestModel()
 	m, _, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	line, ok := m.CursorTarget()
+	line, _, ok := m.CursorTarget()
 	if !ok || line != 2 {
 		t.Fatalf("after moving down once, expected line 2 (old-file line of the delete), got %d", line)
 	}
@@ -86,7 +86,7 @@ func TestClickOnButtonColumnOfChangedLineOpensDraft(t *testing.T) {
 	if !m.DraftActive() {
 		t.Fatal("expected click on button column of a changed line to open the draft box")
 	}
-	line, ok := m.CursorTarget()
+	line, _, ok := m.CursorTarget()
 	if !ok || line != 2 {
 		t.Fatalf("expected cursor to move to the delete line (old-file line 2), got %d (ok=%v)", line, ok)
 	}
@@ -102,7 +102,7 @@ func TestClickOutsideButtonColumnJustMovesCursor(t *testing.T) {
 	if m.DraftActive() {
 		t.Fatal("click outside the button column should not open the draft box")
 	}
-	line, ok := m.CursorTarget()
+	line, _, ok := m.CursorTarget()
 	if !ok || line != 2 {
 		t.Fatalf("expected cursor to still move to line 2, got %d (ok=%v)", line, ok)
 	}
@@ -119,7 +119,7 @@ func TestClickOnContextLineNeverOpensDraft(t *testing.T) {
 	if m.DraftActive() {
 		t.Fatal("context lines should never offer a comment button")
 	}
-	line, ok := m.CursorTarget()
+	line, _, ok := m.CursorTarget()
 	if !ok || line != 1 {
 		t.Fatalf("expected cursor at line 1, got %d (ok=%v)", line, ok)
 	}
@@ -156,7 +156,7 @@ func TestDraftSubmitFlow(t *testing.T) {
 		t.Fatal("expected draft to close after submit")
 	}
 
-	line, text := m.TakeSubmission()
+	line, _, text := m.TakeSubmission()
 	if line != 1 {
 		t.Fatalf("expected submission line 1, got %d", line)
 	}
@@ -203,7 +203,7 @@ func TestTypingWhileDraftActiveDoesNotMoveCursorOrQuit(t *testing.T) {
 	if !m.DraftActive() {
 		t.Fatal("draft should still be active")
 	}
-	line, _ := m.CursorTarget()
+	line, _, _ := m.CursorTarget()
 	if line != 1 {
 		t.Fatalf("cursor should not have moved while drafting, got target line %d", line)
 	}
@@ -234,10 +234,10 @@ func TestReplyButtonRenderedOnlyForLinesWithThreads(t *testing.T) {
 	m := newTestModel()
 	m.SetAnnotations([]annotate.Annotation{{File: "example.go", Line: 1, Author: annotate.Human, Text: "why?"}})
 
-	if _, ok := findReplyRow(m, 1); !ok {
+	if _, ok := findReplyRow(m, 1, false); !ok {
 		t.Fatal("expected a [Reply] button row for line 1, which has a thread")
 	}
-	if _, ok := findReplyRow(m, 2); ok {
+	if _, ok := findReplyRow(m, 2, false); ok {
 		t.Fatal("line 2 has no thread and should not get a [Reply] button")
 	}
 }
@@ -246,7 +246,7 @@ func TestClickOnReplyButtonOpensDraftAttachedToThatLine(t *testing.T) {
 	m := newTestModel()
 	m.SetAnnotations([]annotate.Annotation{{File: "example.go", Line: 1, Author: annotate.Human, Text: "why?"}})
 
-	row, ok := findReplyRow(m, 1)
+	row, ok := findReplyRow(m, 1, false)
 	if !ok {
 		t.Fatal("expected to find the [Reply] button row for line 1")
 	}
@@ -262,9 +262,30 @@ func TestClickOnReplyButtonOpensDraftAttachedToThatLine(t *testing.T) {
 	if !m.draftIsReply {
 		t.Fatal("expected the draft opened via [Reply] to be marked as a reply")
 	}
-	line, ok := m.CursorTarget()
+	line, _, ok := m.CursorTarget()
 	if !ok || line != 1 {
 		t.Fatalf("expected draft attached to line 1, got %d (ok=%v)", line, ok)
+	}
+}
+
+// TestCommentOnOldLineDoesNotDuplicateOntoUnrelatedNewLineOfSameNumber guards
+// a bug where a comment attached to a deleted line (whose canonical number
+// comes from the old-file space) also rendered on an unrelated line that
+// happens to share the same number in the new-file space — old- and
+// new-file line numbering are independent sequences that commonly collide
+// (testFile's delete is old-file line 2, and its first add is new-file line
+// 2), so the two spaces must be kept distinct.
+func TestCommentOnOldLineDoesNotDuplicateOntoUnrelatedNewLineOfSameNumber(t *testing.T) {
+	m := newTestModel()
+	m.SetAnnotations([]annotate.Annotation{{
+		File: "example.go", Line: 2, OldLine: true, Author: annotate.Human, Text: "why remove this?",
+	}})
+
+	if _, ok := findReplyRow(m, 2, true); !ok {
+		t.Fatal("expected a [Reply] button on the deleted line (old-file line 2)")
+	}
+	if _, ok := findReplyRow(m, 2, false); ok {
+		t.Fatal("comment on the deleted line must not also thread onto the unrelated add line (new-file line 2)")
 	}
 }
 
@@ -342,7 +363,7 @@ func TestClickPastReplyButtonColumnsDoesNothing(t *testing.T) {
 	m := newTestModel()
 	m.SetAnnotations([]annotate.Annotation{{File: "example.go", Line: 1, Author: annotate.Human, Text: "why?"}})
 
-	row, ok := findReplyRow(m, 1)
+	row, ok := findReplyRow(m, 1, false)
 	if !ok {
 		t.Fatal("expected to find the [Reply] button row for line 1")
 	}
@@ -447,7 +468,7 @@ func TestSplitViewClickOnLeftButtonOpensDraftOnDeleteLine(t *testing.T) {
 	if !m.DraftActive() {
 		t.Fatal("expected click on left button column to open the draft box")
 	}
-	line, ok := m.CursorTarget()
+	line, _, ok := m.CursorTarget()
 	if !ok || line != 2 {
 		t.Fatalf("expected cursor on the delete line (old-file line 2), got %d (ok=%v)", line, ok)
 	}
@@ -463,7 +484,7 @@ func TestSplitViewClickOnRightButtonOpensDraftOnAddLine(t *testing.T) {
 	if !m.DraftActive() {
 		t.Fatal("expected click on right button column to open the draft box")
 	}
-	line, ok := m.CursorTarget()
+	line, _, ok := m.CursorTarget()
 	if !ok || line != 2 {
 		t.Fatalf("expected cursor on the add line (new-file line 2), got %d (ok=%v)", line, ok)
 	}

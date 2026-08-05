@@ -70,12 +70,23 @@ func authorStyle(author string) lipgloss.Style {
 	}
 }
 
+// lineKey identifies the diff line an annotation or draft attaches to: a
+// canonical line number plus which coordinate space it's from. Old- and
+// new-file line numbers are independent sequences that can land on the same
+// integer (e.g. a deleted line's old-file number and some other, unrelated
+// line's new-file number), so the number alone isn't a unique key within a
+// file's diff — Old disambiguates them.
+type lineKey struct {
+	line int
+	old  bool
+}
+
 // rowMeta records what a single rendered row corresponds to, so mouse clicks
 // (given only an absolute row number) can be mapped back to a diff line.
 type rowMeta struct {
-	ordinal   int  // index into the flat list of diff lines; -1 if not a code line
-	changed   bool // true for add/delete lines, i.e. lines that get a comment button
-	replyLine int  // >0 if this row is the "[Reply]" button for this canonical line number
+	ordinal  int     // index into the flat list of diff lines; -1 if not a code line
+	changed  bool    // true for add/delete lines, i.e. lines that get a comment button
+	replyKey lineKey // replyKey.line > 0 if this row is the "[Reply]" button for this line
 
 	// The fields below apply only when splitRow is true, i.e. this row is a
 	// side-by-side code row rendered by renderSplitHunk. Unlike unified rows
@@ -107,11 +118,11 @@ type Model struct {
 
 	draftActive   bool
 	draftOrdinal  int  // which diff line ordinal the open draft is attached to
-	draftLine     int  // canonical line number, captured at activation time
+	draftKey      lineKey
 	draftIsReply  bool // true if the line already had a thread when the draft opened
 	draftTextarea textarea.Model
 
-	submittedLine int
+	submittedKey  lineKey
 	submittedText string
 
 	style chroma.Style
@@ -185,37 +196,32 @@ func (m *Model) SetAnnotations(annotations []annotate.Annotation) {
 }
 
 // CursorTarget returns the canonical line number under the cursor (new-file
-// line number if present, else old-file line number) so the caller can
-// attach a new comment to it. ok is false if the file has no lines.
-func (m Model) CursorTarget() (line int, ok bool) {
+// line number if present, else old-file line number), plus whether that
+// number is from the old-file space (true only for a pure deletion), so the
+// caller can attach a new comment to it. ok is false if the file has no
+// lines.
+func (m Model) CursorTarget() (line int, old bool, ok bool) {
 	i := 0
 	for _, hunk := range m.file.Hunks {
 		for _, l := range hunk.Lines {
 			if i == m.cursor {
-				if l.NewLineNo > 0 {
-					return l.NewLineNo, true
-				}
-				return l.OldLineNo, true
+				key := canonicalKey(l)
+				return key.line, key.old, true
 			}
 			i++
 		}
 	}
-	return 0, false
+	return 0, false, false
 }
 
-// ordinalForLine finds the diff-line ordinal whose canonical line number
-// (new-file if present, else old-file) matches line, so a click on a
-// "[Reply]" button (which isn't itself the line's own row) can move the
-// cursor there before opening the draft box.
-func (m Model) ordinalForLine(line int) (int, bool) {
+// ordinalForLine finds the diff-line ordinal whose canonical key matches
+// key, so a click on a "[Reply]" button (which isn't itself the line's own
+// row) can move the cursor there before opening the draft box.
+func (m Model) ordinalForLine(key lineKey) (int, bool) {
 	i := 0
 	for _, hunk := range m.file.Hunks {
 		for _, l := range hunk.Lines {
-			key := l.NewLineNo
-			if key == 0 {
-				key = l.OldLineNo
-			}
-			if key == line {
+			if canonicalKey(l) == key {
 				return i, true
 			}
 			i++
@@ -297,10 +303,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, bool) {
 			if absRow >= 0 && absRow < len(m.rows) {
 				meta := m.rows[absRow]
 
-				if meta.replyLine > 0 {
+				if meta.replyKey.line > 0 {
 					onButton := msg.X < len(commentThreadIndent)+len(replyButtonGlyph)
 					if onButton {
-						if ord, ok := m.ordinalForLine(meta.replyLine); ok {
+						if ord, ok := m.ordinalForLine(meta.replyKey); ok {
 							m.cursor = ord
 							return m.activateDraft(), nil, false
 						}
@@ -356,7 +362,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd, bool) {
 // activateDraft opens the inline note box on the current cursor line, if
 // that line has a valid target (i.e. the file isn't empty).
 func (m Model) activateDraft() Model {
-	line, ok := m.CursorTarget()
+	line, old, ok := m.CursorTarget()
 	if !ok {
 		return m
 	}
@@ -370,10 +376,10 @@ func (m Model) activateDraft() Model {
 
 	m.draftActive = true
 	m.draftOrdinal = m.cursor
-	m.draftLine = line
+	m.draftKey = lineKey{line: line, old: old}
 	m.draftIsReply = false
 	for _, a := range m.annotations {
-		if a.Line == line {
+		if a.Line == line && a.OldLine == old {
 			m.draftIsReply = true
 			break
 		}
@@ -397,7 +403,7 @@ func (m Model) updateDraft(msg tea.Msg) (Model, tea.Cmd, bool) {
 			if text == "" {
 				return m, nil, false
 			}
-			m.submittedLine = m.draftLine
+			m.submittedKey = m.draftKey
 			m.submittedText = text
 			return m, nil, true
 		}
@@ -416,12 +422,13 @@ func (m Model) DraftActive() bool {
 	return m.draftActive
 }
 
-// TakeSubmission returns the note text and target line captured by the most
-// recent ctrl+s submission. Call this once, immediately after Update returns
-// true, to persist it — the values are not cleared automatically since
-// diffview has no store of its own to write to.
-func (m Model) TakeSubmission() (line int, text string) {
-	return m.submittedLine, m.submittedText
+// TakeSubmission returns the note text and target line (plus whether that
+// line number is from the old-file space) captured by the most recent
+// ctrl+s submission. Call this once, immediately after Update returns true,
+// to persist it — the values are not cleared automatically since diffview
+// has no store of its own to write to.
+func (m Model) TakeSubmission() (line int, old bool, text string) {
+	return m.submittedKey.line, m.submittedKey.old, m.submittedText
 }
 
 func (m Model) View() string {
@@ -434,9 +441,10 @@ func (m *Model) render() {
 		lexer = lexers.Fallback
 	}
 
-	annotationsByLine := map[int][]annotate.Annotation{}
+	annotationsByLine := map[lineKey][]annotate.Annotation{}
 	for _, a := range m.annotations {
-		annotationsByLine[a.Line] = append(annotationsByLine[a.Line], a)
+		key := lineKey{line: a.Line, old: a.OldLine}
+		annotationsByLine[key] = append(annotationsByLine[key], a)
 	}
 
 	if m.draftActive {
@@ -477,20 +485,22 @@ func (m *Model) render() {
 	m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
 }
 
-// canonicalKey is the line number an annotation attaches to: the new-file
-// line if the line exists there, else the old-file line. Matches how
-// CursorTarget picks a line number for a freshly created comment.
-func canonicalKey(l diffparse.Line) int {
+// canonicalKey is the key an annotation attaches to: the new-file line if
+// the line exists there, else the old-file line (with old set so it isn't
+// confused with an unrelated new-file line of the same number elsewhere in
+// the diff). Matches how CursorTarget picks a target for a freshly created
+// comment.
+func canonicalKey(l diffparse.Line) lineKey {
 	if l.NewLineNo > 0 {
-		return l.NewLineNo
+		return lineKey{line: l.NewLineNo}
 	}
-	return l.OldLineNo
+	return lineKey{line: l.OldLineNo, old: true}
 }
 
 // emitThreadRows writes the existing comment cards, "[Reply]" button, and
 // (if open) the draft box for the diff line at ordinal/key. Shared by both
 // unified and split rendering so the two stay in sync.
-func (m *Model) emitThreadRows(writeLine func(string, rowMeta), annotationsByLine map[int][]annotate.Annotation, key, ordinal int) {
+func (m *Model) emitThreadRows(writeLine func(string, rowMeta), annotationsByLine map[lineKey][]annotate.Annotation, key lineKey, ordinal int) {
 	thread := annotationsByLine[key]
 	for _, a := range thread {
 		for _, line := range renderCommentCard(a, m.boxWidth(len(commentThreadIndent))) {
@@ -501,7 +511,7 @@ func (m *Model) emitThreadRows(writeLine func(string, rowMeta), annotationsByLin
 	// exact line — the open draft box IS the reply affordance at that point,
 	// showing both would be redundant.
 	if len(thread) > 0 && !(m.draftActive && ordinal == m.draftOrdinal) {
-		writeLine(commentThreadIndent+commentBtnStyle.Render(replyButtonGlyph), rowMeta{ordinal: -1, replyLine: key})
+		writeLine(commentThreadIndent+commentBtnStyle.Render(replyButtonGlyph), rowMeta{ordinal: -1, replyKey: key})
 	}
 	if m.draftActive && ordinal == m.draftOrdinal {
 		for _, line := range m.renderDraftBox() {
@@ -513,7 +523,7 @@ func (m *Model) emitThreadRows(writeLine func(string, rowMeta), annotationsByLin
 // renderUnifiedHunk renders one hunk's lines the traditional way: one row
 // per diff line, sign-prefixed, in original patch order. Returns the ordinal
 // just past this hunk's lines.
-func (m *Model) renderUnifiedHunk(hunk diffparse.Hunk, ordinal int, lexer chroma.Lexer, annotationsByLine map[int][]annotate.Annotation, writeLine func(string, rowMeta)) int {
+func (m *Model) renderUnifiedHunk(hunk diffparse.Hunk, ordinal int, lexer chroma.Lexer, annotationsByLine map[lineKey][]annotate.Annotation, writeLine func(string, rowMeta)) int {
 	for _, l := range hunk.Lines {
 		isCursor := ordinal == m.cursor
 		if isCursor {
@@ -579,7 +589,7 @@ func pairSplitRows(lines []diffparse.Line) []splitPair {
 
 // renderSplitHunk renders one hunk's lines side-by-side, GitHub style.
 // Returns the ordinal just past this hunk's lines.
-func (m *Model) renderSplitHunk(hunk diffparse.Hunk, ordinal int, lexer chroma.Lexer, annotationsByLine map[int][]annotate.Annotation, writeLine func(string, rowMeta)) int {
+func (m *Model) renderSplitHunk(hunk diffparse.Hunk, ordinal int, lexer chroma.Lexer, annotationsByLine map[lineKey][]annotate.Annotation, writeLine func(string, rowMeta)) int {
 	base := ordinal
 	for _, pr := range pairSplitRows(hunk.Lines) {
 		var leftLine, rightLine diffparse.Line
@@ -711,9 +721,9 @@ func boxContentLine(content string, total int, style lipgloss.Style) string {
 func (m Model) renderDraftBox() []string {
 	total := m.boxWidth(len(commentThreadIndent))
 
-	title := fmt.Sprintf(" Draft note - %s (%s) R%d ", m.file.Name(), fileStatus(m.file), m.draftLine)
+	title := fmt.Sprintf(" Draft note - %s (%s) R%d ", m.file.Name(), fileStatus(m.file), m.draftKey.line)
 	if m.draftIsReply {
-		title = fmt.Sprintf(" Reply - %s R%d ", m.file.Name(), m.draftLine)
+		title = fmt.Sprintf(" Reply - %s R%d ", m.file.Name(), m.draftKey.line)
 	}
 
 	var lines []string

@@ -209,12 +209,13 @@ func (a App) forwardToDiffview(msg tea.Msg) (tea.Model, tea.Cmd) {
 	a.diffview, cmd, submitted = a.diffview.Update(msg)
 	if submitted {
 		if f, ok := a.sidebar.Selected(); ok {
-			line, text := a.diffview.TakeSubmission()
+			line, old, text := a.diffview.TakeSubmission()
 			a.store.Add(annotate.Annotation{
-				File:   f.Name(),
-				Line:   line,
-				Author: annotate.Human,
-				Text:   text,
+				File:    f.Name(),
+				Line:    line,
+				OldLine: old,
+				Author:  annotate.Human,
+				Text:    text,
 			})
 		}
 	}
