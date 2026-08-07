@@ -62,8 +62,12 @@ func main() {
 
 	// Best-effort: keep the global skills dir in step with this binary. A
 	// Homebrew upgrade just swaps the binary, so this is what actually
-	// propagates bundled skill updates, since there's no separate install hook.
-	_ = syncSkills(cfg, false)
+	// propagates bundled skill updates, since there's no separate install
+	// hook. Silent: printing here would land on the terminal a moment before
+	// the TUI takes over the alt screen, which reads as a stray/garbled line
+	// rather than useful output. `kode skills sync` remains the way to see
+	// what got synced.
+	_ = syncSkillsQuiet(cfg)
 
 	src := git.New("")
 
@@ -174,7 +178,8 @@ func runRenderDiagram() {
 // switch in main(): it's the one place a new user (or a Homebrew "kode
 // --help" pipe) should be able to see everything the binary can do.
 func printHelp() {
-	fmt.Println(`kode is a terminal diff reviewer with a built-in AI agent.
+	fmt.Println(`kode is a terminal diff reviewer, with a skill for Claude Code so an
+agent session can leave you comments and diagrams as it explores a diff.
 
 Usage:
   kode                Review the current working diff (git diff) in the TUI
@@ -202,21 +207,23 @@ full list of settings.`)
 }
 
 // syncSkills writes kode's bundled skills (internal/agent/skills/bundled)
-// into cfg.Agent.SkillsPath. force always re-syncs, e.g. for the explicit
-// `kode skills sync` command; otherwise it's a no-op once per version, per
-// bundled.EnsureSynced.
+// into cfg.Agent.SkillsPath and reports what it did, for the explicit
+// `kode skills sync` command.
 func syncSkills(cfg config.Config, force bool) error {
-	version := buildinfo.Version
-	synced, names, err := bundled.EnsureSynced(cfg.Agent.SkillsPath, version, force)
+	_, names, err := bundled.EnsureSynced(cfg.Agent.SkillsPath, buildinfo.Version, force)
 	if err != nil {
 		return fmt.Errorf("sync skills: %w", err)
 	}
-	if force {
-		fmt.Printf("kode: synced %d skill(s) to %s: %v\n", len(names), cfg.Agent.SkillsPath, names)
-	} else if synced && len(names) > 0 {
-		fmt.Fprintf(os.Stderr, "kode: updated bundled skills in %s for %s\n", cfg.Agent.SkillsPath, version)
-	}
+	fmt.Printf("kode: synced %d skill(s) to %s: %v\n", len(names), cfg.Agent.SkillsPath, names)
 	return nil
+}
+
+// syncSkillsQuiet does the same sync as syncSkills but never prints,
+// including on error. It's what runs implicitly on every startup to keep
+// the global skills dir in step with the binary; see the call site.
+func syncSkillsQuiet(cfg config.Config) error {
+	_, _, err := bundled.EnsureSynced(cfg.Agent.SkillsPath, buildinfo.Version, false)
+	return err
 }
 
 // checkForUpdate asks GitHub (via a cached, rate-limited check) whether a
