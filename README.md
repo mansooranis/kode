@@ -1,14 +1,15 @@
 # kode
 
-kode is a terminal app for reviewing code changes, with an AI agent built in
-to help you understand them. Point it at a git diff and it shows you a fast,
-readable side by side (or stacked) view with syntax highlighting, lets you
-leave inline comments as you go, and can call on an embedded coding agent to
-explain a hunk, answer questions about it, or write annotations and Mermaid
-diagrams of its own.
+kode is a terminal app for reviewing code changes. Point it at a git diff and
+it shows you a fast, readable side by side (or stacked) view with syntax
+highlighting, and lets you leave inline comments as you go. It also ships a
+skill for Claude Code (`kode skill install`), so a `claude` session can read
+and write comments and Mermaid diagrams directly into the same diff you have
+open, to explain a hunk, answer questions about it, or document what it
+found.
 
-> **Early release.** kode is at v0.0.1, expect rough edges and breaking
-> changes between versions.
+> **Early release.** kode is pre-1.0, expect rough edges and breaking changes
+> between versions. Run `kode version` to check what you have.
 
 ## Getting started
 
@@ -18,6 +19,11 @@ The easiest way to install kode is via Homebrew:
 brew tap mansooranis/kode
 brew install kode
 ```
+
+Then, if you also use Claude Code, run `kode skill install` once to copy the
+`kode-comments` skill into `~/.claude/skills`. That's what lets a `claude`
+session read and write comments and Mermaid diagrams directly into a diff
+you have open in kode — see [Features](#features) below.
 
 You can also build it from source if you have Go installed. Clone the repo
 and build it:
@@ -65,18 +71,7 @@ Run `kode help` at any time to see every command kode understands.
   diff, the same way you would leave a comment in a code review tool.
   Comments are saved to a JSON file in the repo (`.kode/annotations.json` by
   default) so they survive a restart and can be read or written by anything
-  else that touches that file, including the embedded agent.
-- **Built-in AI agent.** kode ships with an agent that can read the diff you
-  have open, explain what changed, and answer questions about it. The agent
-  supports MCP tool servers and a pluggable model provider (Anthropic by
-  default), configurable under the `[agent]` section of your config.
-- **Skills.** The agent loads Claude-Code-style skills (markdown files with
-  frontmatter) from a global skills folder, normally
-  `~/.config/kode/skills`. kode ships a few of its own and keeps them up to
-  date automatically: every time you run kode after an upgrade, it notices
-  its version changed and re-copies its bundled skills into that folder, so
-  you never have to do it by hand. Run `kode skills sync` to force it right
-  away.
+  else that touches that file, including a separate agent session.
 - **Comments from another agent session.** kode's comments and diagrams live
   in a JSON file in the repo (`.kode/annotations.json` by default — see
   below), so a separate agent session, such as Claude Code, can read and
@@ -93,7 +88,7 @@ Run `kode help` at any time to see every command kode understands.
   control tool your project uses to produce the diff it renders.
 - **GitHub PR review.** `kode pr [number]` fetches a pull request's diff via
   the `gh` CLI and opens it in the same TUI as a local diff, with the same
-  split view, inline comments, and agent support.
+  split view and inline comments.
 
 ## Configuration
 
@@ -108,7 +103,8 @@ Anything you don't set keeps its default value. Notable settings:
   Only compares against tagged release builds (`make build`/`make install`);
   a `dev` build never checks. No network call, download, or install happens
   beyond that GET — set to `false` to disable entirely.
-- `[agent]`: `enabled`, `provider`, `model`, `effort`, `skills_path`
+- `[agent] skills_path`: where `kode skills sync` writes kode's bundled
+  skills (default `~/.config/kode/skills`)
 - `[annotations]`: `file`, where comments and diagrams are persisted, and
   where another agent session should read/write them directly
 - `[keybindings]`: remap any key to a different action
