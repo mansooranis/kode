@@ -1,7 +1,7 @@
 # kode
 
 kode is a terminal app for reviewing code changes. Point it at a git diff and
-it shows you a fast, readable side by side (or stacked) view with syntax
+it shows you a fast, readable side-by-side (or stacked) view with syntax
 highlighting, and lets you leave inline comments as you go. It also ships a
 skill for Claude Code (`kode skill install`), so a `claude` session can read
 and write comments and Mermaid diagrams directly into the same diff you have
@@ -18,6 +18,7 @@ The easiest way to install kode is via Homebrew:
 ```sh
 brew tap mansooranis/kode
 brew install kode
+kode skill install # for claude skill /kode-comments
 ```
 
 Then, if you also use Claude Code, run `kode skill install` once to copy the
