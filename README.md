@@ -21,44 +21,33 @@ brew install kode
 kode skill install # for claude skill /kode-comments
 ```
 
-Then, if you also use Claude Code, run `kode skill install` once to copy the
-`kode-comments` skill into `~/.claude/skills`. That's what lets a `claude`
-session read and write comments and Mermaid diagrams directly into a diff
-you have open in kode — see [Features](#features) below.
-
-You can also build it from source if you have Go installed. Clone the repo
-and build it:
-
+## Using Kode
+A simple example prompt for Claude to use kode comments to learn about a codebase.
+```
+Use /kode-comments to explain this codebase to me. Use diagrams if necessary.
+```
+Then in a separate terminal:
 ```sh
-git clone https://github.com/mansooranis/kode.git
-cd kode
-make build
+kode explain
 ```
 
-This produces a `kode` binary in the current directory with a real version
-baked in (`kode version` to check). You can also run it straight from source
-while developing, without a build step:
+Output will be annotations of important files along with important lines mentioned by Claude.
+<img width="1582" height="972" alt="Screenshot 2026-08-07 at 1 40 42 AM" src="https://github.com/user-attachments/assets/4ec55fe7-b7fe-469b-9783-af06daa27efa" />
 
-```sh
-go run ./cmd/kode
-```
 
-Once you have a binary, put it somewhere on your `PATH` (for example
-`make install`, which runs `go install` instead of writing a local binary).
-
-To try it out, go into any git repository that has some uncommitted changes
-or a commit you want to look at, and run:
-
+To understand complex diffs, use:
 ```sh
 kode
+# kode diff
+# or to view a GitHub PR on the checked-out branch
+# kode pr
 ```
+This will allow you to view the diff and add your own comments by clicking the `[+]` icon next to a line.
+<img width="1582" height="972" alt="Screenshot 2026-08-07 at 2 04 53 AM" src="https://github.com/user-attachments/assets/87d4cb0f-71bf-495e-9332-6e5a4d8f3dbb" />
+Save the comments and ask the agent to review the comments using the `/kode-comments` skill.
+Press `r` to refresh, and the result would look like this:
+<img width="1582" height="972" alt="Screenshot 2026-08-07 at 2 07 56 AM" src="https://github.com/user-attachments/assets/3a00d0ff-9e3b-42f5-b590-8937a6b59b4d" />
 
-That opens the diff of your working tree in the TUI. To look at a specific
-commit instead, run `kode show <ref>`, for example `kode show HEAD~1`. To
-review a GitHub pull request, run `kode pr <number>` (or just `kode pr` to
-review the PR for your current branch) — this requires the
-[GitHub CLI](https://cli.github.com) (`gh`) to be installed and
-authenticated (`gh auth login`); kode will tell you if either is missing.
 
 Run `kode help` at any time to see every command kode understands.
 
@@ -109,6 +98,27 @@ Anything you don't set keeps its default value. Notable settings:
 - `[annotations]`: `file`, where comments and diagrams are persisted, and
   where another agent session should read/write them directly
 - `[keybindings]`: remap any key to a different action
+
+## Alternative Ways to Install
+You can also build it from source if you have Go installed. Clone the repo
+and build it:
+
+```sh
+git clone https://github.com/mansooranis/kode.git
+cd kode
+make build
+```
+
+This produces a `kode` binary in the current directory with a real version
+baked in (`kode version` to check). You can also run it straight from source
+while developing, without a build step:
+
+```sh
+go run ./cmd/kode
+```
+
+Once you have a binary, put it somewhere on your `PATH` (for example
+`make install`, which runs `go install` instead of writing a local binary).
 
 ## Development
 
