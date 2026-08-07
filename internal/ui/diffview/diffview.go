@@ -29,6 +29,8 @@ var (
 	hunkStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	gutterStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	cursorLineBg    = lipgloss.Color("237")
+	addLineBg       = lipgloss.Color("#0f2f1a") // GitHub-style dark green row tint, added lines
+	delLineBg       = lipgloss.Color("#3f1d1f") // GitHub-style dark red row tint, removed lines
 	commentBtnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	draftBorderClr  = lipgloss.Color("214")
 	draftBorder     = lipgloss.NewStyle().Foreground(draftBorderClr)
@@ -787,16 +789,23 @@ func wrapText(s string, width int) []string {
 func (m *Model) renderLine(lexer chroma.Lexer, l diffparse.Line, isCursor, changed bool) string {
 	sign := " "
 	lineStyle := lipgloss.NewStyle()
+	var rowBg lipgloss.Color
 	switch l.Op {
 	case diffparse.OpAdd:
 		sign = "+"
 		lineStyle = addStyle
+		rowBg = addLineBg
 	case diffparse.OpDelete:
 		sign = "-"
 		lineStyle = delStyle
+		rowBg = delLineBg
 	}
 	if isCursor {
+		// The cursor highlight takes precedence over the add/delete row
+		// tint - painting both would just muddy the color the cursor is
+		// supposed to stand out with.
 		lineStyle = lineStyle.Background(cursorLineBg)
+		rowBg = ""
 	}
 
 	button := commentButtonBlank
@@ -813,25 +822,31 @@ func (m *Model) renderLine(lexer chroma.Lexer, l diffparse.Line, isCursor, chang
 		code = l.Content
 	}
 
+	var row string
 	if !m.lineNumbers {
-		return fmt.Sprintf("%s %s %s", button, lineStyle.Render(sign), code)
+		row = fmt.Sprintf("%s %s %s", button, lineStyle.Render(sign), code)
+	} else {
+		old := "    "
+		if l.OldLineNo > 0 {
+			old = fmt.Sprintf("%4d", l.OldLineNo)
+		}
+		newCol := "    "
+		if l.NewLineNo > 0 {
+			newCol = fmt.Sprintf("%4d", l.NewLineNo)
+		}
+
+		gutterText := old + " " + newCol
+		gutter := gutterStyle.Render(gutterText)
+		if isCursor {
+			gutter = gutterStyle.Background(cursorLineBg).Render(gutterText)
+		}
+		row = fmt.Sprintf("%s %s %s %s", button, gutter, lineStyle.Render(sign), code)
 	}
 
-	old := "    "
-	if l.OldLineNo > 0 {
-		old = fmt.Sprintf("%4d", l.OldLineNo)
+	if rowBg != "" {
+		row = withRowBackground(row, rowBg)
 	}
-	newCol := "    "
-	if l.NewLineNo > 0 {
-		newCol = fmt.Sprintf("%4d", l.NewLineNo)
-	}
-
-	gutterText := old + " " + newCol
-	gutter := gutterStyle.Render(gutterText)
-	if isCursor {
-		gutter = gutterStyle.Background(cursorLineBg).Render(gutterText)
-	}
-	return fmt.Sprintf("%s %s %s %s", button, gutter, lineStyle.Render(sign), code)
+	return row
 }
 
 // renderSplitLine draws one side-by-side row: left and right columns of
@@ -864,16 +879,20 @@ func (m *Model) renderSplitSide(lexer chroma.Lexer, l diffparse.Line, has, isCur
 
 	sign := " "
 	lineStyle := lipgloss.NewStyle()
+	var rowBg lipgloss.Color
 	switch l.Op {
 	case diffparse.OpAdd:
 		sign = "+"
 		lineStyle = addStyle
+		rowBg = addLineBg
 	case diffparse.OpDelete:
 		sign = "-"
 		lineStyle = delStyle
+		rowBg = delLineBg
 	}
 	if isCursor {
 		lineStyle = lineStyle.Background(cursorLineBg)
+		rowBg = ""
 	}
 
 	changed := l.Op != diffparse.OpContext
@@ -913,7 +932,40 @@ func (m *Model) renderSplitSide(lexer chroma.Lexer, l diffparse.Line, has, isCur
 	} else {
 		line = fmt.Sprintf("%s %s %s", button, lineStyle.Render(sign), code)
 	}
-	return padToWidth(line, width)
+	padded := padToWidth(line, width)
+	if rowBg != "" {
+		padded = withRowBackground(padded, rowBg)
+	}
+	return padded
+}
+
+// ansiReset is the SGR sequence chroma's TTY formatter emits after every
+// single token (see withRowBackground).
+const ansiReset = "\x1b[0m"
+
+// withRowBackground paints bg behind an already ANSI-styled row (button,
+// gutter, sign, and chroma-highlighted code), GitHub-style, without
+// disturbing the syntax-highlight foreground colors baked into it. A naive
+// lipgloss.Style{Background: bg}.Render(row) can't do this: chroma emits a
+// full SGR reset ("\x1b[0m", which clears background too) after every single
+// token, so a background wrapped only around the outside would vanish after
+// the row's first colored token. Instead, this renders bg once against a
+// throwaway marker to capture the exact background-set escape sequence
+// lipgloss/termenv would choose for the active terminal's color profile, and
+// re-injects it after every reset found in row, so the tint survives to the
+// end of the line.
+func withRowBackground(row string, bg lipgloss.Color) string {
+	if row == "" {
+		return row
+	}
+	const marker = "\x00"
+	sample := lipgloss.NewStyle().Background(bg).Render(marker)
+	i := strings.Index(sample, marker)
+	if i <= 0 {
+		return row // color disabled for this output (e.g. no TTY) - nothing to inject
+	}
+	set := sample[:i]
+	return set + strings.ReplaceAll(row, ansiReset, ansiReset+set) + ansiReset
 }
 
 // highlight renders a single line of source with chroma, returning ANSI

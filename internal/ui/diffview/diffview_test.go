@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/mansooranis/kode/internal/annotate"
 	"github.com/mansooranis/kode/internal/diffparse"
@@ -541,5 +542,108 @@ func TestSplitViewArrowKeysAlwaysMoveToADifferentRow(t *testing.T) {
 		if got != want {
 			t.Fatalf("step %d up: expected to be back on row %d, got %d", i, want, got)
 		}
+	}
+}
+
+// withTrueColorProfile forces lipgloss to actually emit ANSI color codes for
+// the duration of a test, restoring whatever profile was active beforehand.
+// Without this, lipgloss detects the test binary's stdout isn't a real
+// terminal and silently strips all color, which would make the assertions
+// below trivially (and wrongly) pass on plain, uncolored text.
+func withTrueColorProfile(t *testing.T) {
+	t.Helper()
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+}
+
+// TestAddedAndRemovedLinesGetRowBackground guards the GitHub-style green/red
+// row tint on add/delete lines: it must survive to the end of the line
+// despite chroma emitting a full SGR reset after every syntax-highlighted
+// token, which would otherwise wipe out a naively-applied background after
+// the line's first colored token (see withRowBackground).
+func TestAddedAndRemovedLinesGetRowBackground(t *testing.T) {
+	withTrueColorProfile(t)
+
+	m := newTestModel()
+	view := m.View()
+	lines := strings.Split(view, "\n")
+
+	addSample := lipgloss.NewStyle().Background(addLineBg).Render("x")
+	addBgCode := addSample[:strings.Index(addSample, "x")]
+	delSample := lipgloss.NewStyle().Background(delLineBg).Render("x")
+	delBgCode := delSample[:strings.Index(delSample, "x")]
+
+	var sawAdd, sawDel bool
+	for i, meta := range m.rows {
+		if meta.ordinal < 0 || i >= len(lines) {
+			continue
+		}
+		switch m.file.Hunks[0].Lines[meta.ordinal].Op {
+		case diffparse.OpAdd:
+			sawAdd = true
+			if !strings.Contains(lines[i], addBgCode) {
+				t.Fatalf("added line row %q missing green background %q", lines[i], addBgCode)
+			}
+			// The viewport itself right-pads every row to the pane width
+			// with plain spaces after render() hands off the content, so
+			// check for a trailing reset before that padding rather than at
+			// the very end of the row.
+			if !strings.HasSuffix(strings.TrimRight(lines[i], " "), ansiReset) {
+				t.Fatalf("added line row %q should end with a reset so the tint doesn't bleed into the next row", lines[i])
+			}
+		case diffparse.OpDelete:
+			sawDel = true
+			if !strings.Contains(lines[i], delBgCode) {
+				t.Fatalf("removed line row %q missing red background %q", lines[i], delBgCode)
+			}
+		case diffparse.OpContext:
+			if strings.Contains(lines[i], addBgCode) || strings.Contains(lines[i], delBgCode) {
+				t.Fatalf("context line row %q should not carry an add/delete background", lines[i])
+			}
+		}
+	}
+	if !sawAdd || !sawDel {
+		t.Fatalf("test file should exercise both an add and a delete line, sawAdd=%v sawDel=%v", sawAdd, sawDel)
+	}
+}
+
+// TestCursorRowSuppressesAddDeleteBackground guards the precedence rule in
+// renderLine/renderSplitSide: the cursor's own highlight should win rather
+// than fighting the add/delete row tint on the same line.
+func TestCursorRowSuppressesAddDeleteBackground(t *testing.T) {
+	withTrueColorProfile(t)
+
+	m := newTestModel() // cursor starts on ordinal 0, the delete line
+	line := strings.Split(m.View(), "\n")[m.cursorRow]
+
+	delBgCode := lipgloss.NewStyle().Background(delLineBg).Render("x")
+	delBgCode = delBgCode[:strings.Index(delBgCode, "x")]
+	if strings.Contains(line, delBgCode) {
+		t.Fatalf("cursor row %q should not also carry the delete row background", line)
+	}
+}
+
+// TestSplitViewAddedAndRemovedLinesGetRowBackground is the split-view
+// counterpart of TestAddedAndRemovedLinesGetRowBackground: each side is
+// tinted independently, and the tint must span the full column width (up to
+// the padding), not just the text.
+func TestSplitViewAddedAndRemovedLinesGetRowBackground(t *testing.T) {
+	withTrueColorProfile(t)
+
+	m := newTestModel()
+	m.SetSplitView(true)
+	line := strings.Split(m.View(), "\n")[2] // delete/add pair row, see TestSplitViewPairsDeleteAndAddRuns
+
+	addBgCode := lipgloss.NewStyle().Background(addLineBg).Render("x")
+	addBgCode = addBgCode[:strings.Index(addBgCode, "x")]
+	delBgCode := lipgloss.NewStyle().Background(delLineBg).Render("x")
+	delBgCode = delBgCode[:strings.Index(delBgCode, "x")]
+
+	if !strings.Contains(line, delBgCode) {
+		t.Fatalf("split row %q missing red background on its delete side", line)
+	}
+	if !strings.Contains(line, addBgCode) {
+		t.Fatalf("split row %q missing green background on its add side", line)
 	}
 }
